@@ -154,7 +154,7 @@ func initialModel() model {
 		verInput:    ti,
 		viewport:    vp,
 		spinner:     sp,
-		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and action.", "Press 's' to manage secure Azure-style secrets."},
+		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and action.", "Press 's' to manage secure secrets."},
 		secList:     secList,
 		secKeyIn:    secKeyIn,
 		secValIn:    secValIn,

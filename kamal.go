@@ -192,7 +192,7 @@ func runKamal(ctx context.Context, dest string, prefixArgs []string, args []stri
 	full := append(append([]string{}, prefixArgs...), args...)
 	bin, extra, ok := kamalBinaryAvailable()
 	if !ok {
-		doneCh <- fmt.Errorf("kamal binary not found")
+		doneCh <- errBinaryNotFound
 		close(lineCh)
 		return
 	}

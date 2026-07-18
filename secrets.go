@@ -12,7 +12,10 @@ import (
 const keyringService = "kamal-tui-secrets"
 
 func getProjectID() string {
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "kamal-tui"
+	}
 	return filepath.Base(cwd) + "-" + cwd
 }
 
