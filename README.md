@@ -19,7 +19,7 @@ Built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea), it p
 ### Option 1: Using Homebrew (macOS / Linux)
 ```bash
 # Add the tap and install
-brew tap stawan15/kamal-tui
+brew tap stawan15/tap
 brew install kamal-tui
 ```
 
