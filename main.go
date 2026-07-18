@@ -41,17 +41,6 @@ func destSuffix(d destItem) string {
 	return "." + string(d)
 }
 
-<<<<<<< Updated upstream
-=======
-type secretItem struct {
-	key string
-}
-
-func (s secretItem) Title() string       { return s.key }
-func (s secretItem) Description() string { return "********" }
-func (s secretItem) FilterValue() string { return s.key }
-
->>>>>>> Stashed changes
 type logLineMsg string
 type logStreamClosedMsg struct{}
 type cmdDoneMsg struct{ err error }
@@ -82,16 +71,6 @@ type model struct {
 
 	showVersionInput bool
 	versionAction    actionItem
-<<<<<<< Updated upstream
-=======
-
-	// Secrets Manager State
-	showSecrets   bool
-	addingSecret  bool
-	stepSecretKey bool // true = key input, false = value input
-	secList       list.Model
-	secKeyIn      textinput.Model
-	secValIn      textinput.Model
 
 	// Confirmation State
 	showConfirm bool
@@ -99,7 +78,6 @@ type model struct {
 	confirmAct  actionItem
 	confirmDest string
 	confirmVer  string
->>>>>>> Stashed changes
 }
 
 func initialModel() model {
@@ -175,12 +153,6 @@ func (m *model) layout() {
 	if bodyH < 3 {
 		bodyH = 3
 	}
-<<<<<<< Updated upstream
-	
-	// Left column width
-=======
-
->>>>>>> Stashed changes
 	leftW := 30
 	if m.width < 80 {
 		leftW = m.width / 3
@@ -246,12 +218,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-<<<<<<< Updated upstream
-=======
-		if m.showSecrets || m.addingSecret || m.showVersionInput || m.showConfirm {
+		if m.showVersionInput || m.showConfirm {
 			return m, nil
 		}
->>>>>>> Stashed changes
 		leftW := 30
 		if m.width < 80 {
 			leftW = m.width / 3
@@ -284,34 +253,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "q":
-<<<<<<< Updated upstream
-			if !m.showVersionInput && !m.running {
-=======
-			if !m.showVersionInput && !m.running && !m.showSecrets && !m.addingSecret && !m.showConfirm {
->>>>>>> Stashed changes
+			if !m.showVersionInput && !m.running && !m.showConfirm {
 				if m.cancel != nil {
 					m.cancel()
 				}
 				return m, tea.Quit
 			}
 		case "esc":
-<<<<<<< Updated upstream
-=======
 			if m.showConfirm {
 				m.showConfirm = false
 				return m, nil
 			}
-			if m.addingSecret {
-				m.addingSecret = false
-				m.secKeyIn.Blur()
-				m.secValIn.Blur()
-				return m, nil
-			}
-			if m.showSecrets {
-				m.showSecrets = false
-				return m, nil
-			}
->>>>>>> Stashed changes
 			if m.showVersionInput {
 				m.showVersionInput = false
 				m.verInput.Blur()
@@ -321,27 +273,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break // use ctrl+c to abort
 			}
 		case "tab":
-<<<<<<< Updated upstream
-			if !m.showVersionInput {
-=======
-			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm {
->>>>>>> Stashed changes
+			if !m.showVersionInput && !m.showConfirm {
 				m.activePanel = (m.activePanel + 1) % 3
 				return m, nil
 			}
 		case "shift+tab":
-<<<<<<< Updated upstream
-			if !m.showVersionInput {
-=======
-			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm {
->>>>>>> Stashed changes
+			if !m.showVersionInput && !m.showConfirm {
 				m.activePanel = (m.activePanel - 1 + 3) % 3
 				return m, nil
 			}
 		}
 
-<<<<<<< Updated upstream
-=======
 		if m.showConfirm {
 			switch msg.String() {
 			case "y", "Y", "enter":
@@ -353,65 +295,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-
-		if m.addingSecret {
-			switch msg.String() {
-			case "enter":
-				if m.stepSecretKey {
-					key := strings.TrimSpace(m.secKeyIn.Value())
-					if key != "" {
-						m.stepSecretKey = false
-						m.secKeyIn.Blur()
-						m.secValIn.Focus()
-						return m, textinput.Blink
-					}
-				} else {
-					val := strings.TrimSpace(m.secValIn.Value())
-					if val != "" {
-						addSecret(strings.TrimSpace(m.secKeyIn.Value()), val)
-						m.addingSecret = false
-						m.secKeyIn.Blur()
-						m.secValIn.Blur()
-						m.refreshSecrets()
-						return m, nil
-					}
-				}
-			default:
-				var cmd tea.Cmd
-				if m.stepSecretKey {
-					m.secKeyIn, cmd = m.secKeyIn.Update(msg)
-				} else {
-					m.secValIn, cmd = m.secValIn.Update(msg)
-				}
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-		}
-
-		if m.showSecrets {
-			switch msg.String() {
-			case "a":
-				m.addingSecret = true
-				m.stepSecretKey = true
-				m.secKeyIn.SetValue("")
-				m.secValIn.SetValue("")
-				m.secKeyIn.Focus()
-				return m, textinput.Blink
-			case "x", "delete":
-				if it, ok := m.secList.SelectedItem().(secretItem); ok {
-					removeSecret(it.key)
-					m.refreshSecrets()
-				}
-				return m, nil
-			default:
-				var cmd tea.Cmd
-				m.secList, cmd = m.secList.Update(msg)
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-		}
-
->>>>>>> Stashed changes
 		if m.showVersionInput {
 			switch msg.String() {
 			case "enter":
@@ -446,11 +329,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Panel specific updates
-<<<<<<< Updated upstream
-		if !m.showVersionInput {
-=======
-		if !m.showVersionInput && !m.showSecrets && !m.showConfirm {
->>>>>>> Stashed changes
+		if !m.showVersionInput && !m.showConfirm {
 			switch m.activePanel {
 			case panelDestinations:
 				var cmd tea.Cmd
@@ -536,8 +415,6 @@ func (m model) View() string {
 		return "loading…"
 	}
 
-<<<<<<< Updated upstream
-=======
 	// Render overlay if needed
 	if m.showConfirm {
 		cmdStr := strings.Join(m.confirmCmd, " ")
@@ -551,28 +428,6 @@ func (m model) View() string {
 		)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(m.width-10).Render(content))
 	}
-	if m.addingSecret {
-		content := lipgloss.JoinVertical(lipgloss.Left,
-			titleStyle.Render("Add New Secure Secret"),
-			"",
-			m.secKeyIn.View(),
-			"",
-			m.secValIn.View(),
-			"",
-			helpStyle.Render("enter: next/save · esc: cancel"),
-		)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(50).Render(content))
-	}
-	if m.showSecrets {
-		content := lipgloss.JoinVertical(lipgloss.Left,
-			m.secList.View(),
-			"",
-			helpStyle.Render("a: add secret · x/delete: remove · esc: back"),
-		)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(m.width-6).Height(m.height-2).Render(content))
-	}
-
->>>>>>> Stashed changes
 	leftW := 30
 	if m.width < 80 {
 		leftW = m.width / 3
@@ -643,15 +498,7 @@ func (m model) footerView() string {
 	if m.statusLine != "" {
 		actionHint += m.statusLine + " · "
 	}
-<<<<<<< Updated upstream
-	
 	left = actionHint + "d:deploy r:rollback l:logs tab:switch panel q:quit"
-	
-=======
-
-	left = actionHint + "d:deploy r:rollback l:logs s:secrets tab:switch panel q:quit"
-
->>>>>>> Stashed changes
 	return statusBarStyle.Width(m.width).Render(left)
 }
 

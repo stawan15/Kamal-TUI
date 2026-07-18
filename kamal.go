@@ -33,9 +33,6 @@ func actions() []actionItem {
 			},
 		},
 		{
-<<<<<<< Updated upstream
-			title: "Redeploy",
-=======
 			title: "⚙️  Setup",
 			desc:  "kamal setup -d <destination> (provision servers & deploy)",
 			buildArgs: func(dest, _ string) []string {
@@ -51,7 +48,6 @@ func actions() []actionItem {
 		},
 		{
 			title: "♻️  Redeploy",
->>>>>>> Stashed changes
 			desc:  "kamal redeploy -d <destination> (skip build cache invalidation steps)",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"redeploy"}, dest)
@@ -114,8 +110,6 @@ func actions() []actionItem {
 				return withDest([]string{"audit"}, dest)
 			},
 		},
-<<<<<<< Updated upstream
-=======
 		{
 			title: "🗑️  Remove",
 			desc:  "kamal remove -d <destination> (remove containers and images from servers)",
@@ -123,7 +117,6 @@ func actions() []actionItem {
 				return withDest([]string{"remove"}, dest)
 			},
 		},
->>>>>>> Stashed changes
 	}
 }
 
