@@ -3,17 +3,20 @@ package main
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	colorAccent  = lipgloss.Color("205")
-	colorMuted   = lipgloss.Color("241")
-	colorGood    = lipgloss.Color("42")
-	colorBad     = lipgloss.Color("197")
-	colorBorder  = lipgloss.Color("62")
-	colorActive  = lipgloss.Color("212")
-	colorHeading = lipgloss.Color("212")
+	// Tokyo Night-ish / Modern theme
+	colorBg      = lipgloss.Color("#1a1b26")
+	colorFg      = lipgloss.Color("#c0caf5")
+	colorAccent  = lipgloss.Color("#7aa2f7") // Blue
+	colorActive  = lipgloss.Color("#bb9af7") // Purple
+	colorBorder  = lipgloss.Color("#414868") // Dark Gray
+	colorMuted   = lipgloss.Color("#565f89")
+	colorGood    = lipgloss.Color("#9ece6a") // Green
+	colorBad     = lipgloss.Color("#f7768e") // Red
+	colorWarning = lipgloss.Color("#e0af68") // Yellow
 
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(colorHeading).
+			Foreground(colorActive).
 			Padding(0, 1)
 
 	subtitleStyle = lipgloss.NewStyle().
@@ -21,8 +24,8 @@ var (
 			Padding(0, 1)
 
 	statusBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("62")).
+			Foreground(colorFg).
+			Background(lipgloss.Color("#24283b")). // slightly lighter bg
 			Padding(0, 1)
 
 	inactivePanelStyle = lipgloss.NewStyle().
@@ -31,7 +34,7 @@ var (
 			Padding(0, 1)
 
 	activePanelStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
+			Border(lipgloss.ThickBorder()). // Thick border for active panel
 			BorderForeground(colorActive).
 			Padding(0, 1)
 
