@@ -3,12 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 // actionItem describes one action available in the main menu.
@@ -185,17 +188,18 @@ func kamalBinaryAvailable() (bin string, args []string, ok bool) {
 // stdout+stderr lines to lineCh (closed when the process finishes producing
 // output) and sending the final error (nil on success) to doneCh exactly
 // once. Cancel ctx to kill the process early.
-func runKamal(ctx context.Context, prefixArgs []string, args []string, lineCh chan<- string, doneCh chan<- error) {
+func runKamal(ctx context.Context, dest string, prefixArgs []string, args []string, lineCh chan<- string, doneCh chan<- error) {
 	full := append(append([]string{}, prefixArgs...), args...)
 	bin, extra, ok := kamalBinaryAvailable()
 	if !ok {
-		doneCh <- errBinaryNotFound
+		doneCh <- fmt.Errorf("kamal binary not found")
 		close(lineCh)
 		return
 	}
 	full = append(extra, full...)
 
 	cmd := exec.CommandContext(ctx, bin, full...)
+	cmd.Env = loadEnvForDest(dest)
 	pr, pw := io.Pipe()
 	cmd.Stdout = pw
 	cmd.Stderr = pw
@@ -220,4 +224,54 @@ func runKamal(ctx context.Context, prefixArgs []string, args []string, lineCh ch
 		pw.Close()
 		doneCh <- waitErr
 	}()
+}
+
+// loadEnvForDest reads secrets from standard kamal env locations
+func loadEnvForDest(dest string) []string {
+	envFiles := []string{
+		".env",
+		filepath.Join(".kamal", "secrets-common"),
+		filepath.Join("kamal", "secrets-common"),
+		filepath.Join(".kamal", "secrets"),
+		filepath.Join("kamal", "secrets"),
+	}
+	if dest != "" {
+		envFiles = append(envFiles,
+			fmt.Sprintf(".env.%s", dest),
+			filepath.Join(".kamal", fmt.Sprintf("secrets-%s", dest)),
+			filepath.Join("kamal", fmt.Sprintf("secrets-%s", dest)),
+		)
+	}
+
+	envMap := make(map[string]string)
+	for _, f := range envFiles {
+		if m, err := godotenv.Read(f); err == nil {
+			for k, v := range m {
+				envMap[k] = v
+			}
+		}
+	}
+
+	// Load securely stored secrets from keychain
+	keychainSecrets := loadSecrets()
+	for k, v := range keychainSecrets {
+		envMap[k] = v
+	}
+
+	cmdEnv := os.Environ()
+	for k, v := range envMap {
+		found := false
+		prefix := k + "="
+		for i, e := range cmdEnv {
+			if strings.HasPrefix(e, prefix) {
+				cmdEnv[i] = prefix + v
+				found = true
+				break
+			}
+		}
+		if !found {
+			cmdEnv = append(cmdEnv, prefix+v)
+		}
+	}
+	return cmdEnv
 }

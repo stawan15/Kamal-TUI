@@ -22,7 +22,6 @@ const (
 	panelLogs
 )
 
-// destItem wraps a destination name for the bubbles list component.
 type destItem string
 
 func (d destItem) Title() string {
@@ -40,6 +39,14 @@ func destSuffix(d destItem) string {
 	}
 	return "." + string(d)
 }
+
+type secretItem struct {
+	key string
+}
+
+func (s secretItem) Title() string       { return s.key }
+func (s secretItem) Description() string { return "********" }
+func (s secretItem) FilterValue() string { return s.key }
 
 type logLineMsg string
 type logStreamClosedMsg struct{}
@@ -71,6 +78,14 @@ type model struct {
 
 	showVersionInput bool
 	versionAction    actionItem
+
+	// Secrets Manager State
+	showSecrets   bool
+	addingSecret  bool
+	stepSecretKey bool // true = key input, false = value input
+	secList       list.Model
+	secKeyIn      textinput.Model
+	secValIn      textinput.Model
 
 	// Confirmation State
 	showConfirm bool
@@ -115,6 +130,23 @@ func initialModel() model {
 
 	vp := viewport.New(0, 0)
 
+	secList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	secList.Title = "Secure Secrets Manager"
+	secList.SetShowStatusBar(false)
+	secList.SetFilteringEnabled(false)
+	secList.SetShowHelp(false)
+	secList.Styles.Title = titleStyle
+
+	secKeyIn := textinput.New()
+	secKeyIn.Placeholder = "Secret Key (e.g. DATABASE_URL)"
+	secKeyIn.Prompt = "Key: "
+
+	secValIn := textinput.New()
+	secValIn.Placeholder = "Secret Value"
+	secValIn.Prompt = "Value: "
+	secValIn.EchoMode = textinput.EchoPassword
+	secValIn.EchoCharacter = '*'
+
 	return model{
 		activePanel: panelDestinations,
 		actionList:  al,
@@ -122,7 +154,10 @@ func initialModel() model {
 		verInput:    ti,
 		viewport:    vp,
 		spinner:     sp,
-		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and action."},
+		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and action.", "Press 's' to manage secure Azure-style secrets."},
+		secList:     secList,
+		secKeyIn:    secKeyIn,
+		secValIn:    secValIn,
 	}
 }
 
@@ -167,6 +202,17 @@ func (m *model) layout() {
 
 	m.viewport.Width = rightW - 4
 	m.viewport.Height = bodyH - 2
+
+	m.secList.SetSize(m.width-10, m.height-6)
+}
+
+func (m *model) refreshSecrets() {
+	keys := getSecretKeys()
+	items := make([]list.Item, 0, len(keys))
+	for _, k := range keys {
+		items = append(items, secretItem{key: k})
+	}
+	m.secList.SetItems(items)
 }
 
 func (m model) handleShortcutAction(titleSubstr string) (tea.Model, tea.Cmd) {
@@ -218,7 +264,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.showVersionInput || m.showConfirm {
+		if m.showSecrets || m.addingSecret || m.showVersionInput || m.showConfirm {
 			return m, nil
 		}
 		leftW := 30
@@ -253,7 +299,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "q":
-			if !m.showVersionInput && !m.running && !m.showConfirm {
+			if !m.showVersionInput && !m.running && !m.showSecrets && !m.addingSecret && !m.showConfirm {
 				if m.cancel != nil {
 					m.cancel()
 				}
@@ -262,6 +308,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.showConfirm {
 				m.showConfirm = false
+				return m, nil
+			}
+			if m.addingSecret {
+				m.addingSecret = false
+				m.secKeyIn.Blur()
+				m.secValIn.Blur()
+				return m, nil
+			}
+			if m.showSecrets {
+				m.showSecrets = false
 				return m, nil
 			}
 			if m.showVersionInput {
@@ -273,12 +329,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break // use ctrl+c to abort
 			}
 		case "tab":
-			if !m.showVersionInput && !m.showConfirm {
+			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm {
 				m.activePanel = (m.activePanel + 1) % 3
 				return m, nil
 			}
 		case "shift+tab":
-			if !m.showVersionInput && !m.showConfirm {
+			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm {
 				m.activePanel = (m.activePanel - 1 + 3) % 3
 				return m, nil
 			}
@@ -294,6 +350,63 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, nil
+		}
+
+		if m.addingSecret {
+			switch msg.String() {
+			case "enter":
+				if m.stepSecretKey {
+					key := strings.TrimSpace(m.secKeyIn.Value())
+					if key != "" {
+						m.stepSecretKey = false
+						m.secKeyIn.Blur()
+						m.secValIn.Focus()
+						return m, textinput.Blink
+					}
+				} else {
+					val := strings.TrimSpace(m.secValIn.Value())
+					if val != "" {
+						addSecret(strings.TrimSpace(m.secKeyIn.Value()), val)
+						m.addingSecret = false
+						m.secKeyIn.Blur()
+						m.secValIn.Blur()
+						m.refreshSecrets()
+						return m, nil
+					}
+				}
+			default:
+				var cmd tea.Cmd
+				if m.stepSecretKey {
+					m.secKeyIn, cmd = m.secKeyIn.Update(msg)
+				} else {
+					m.secValIn, cmd = m.secValIn.Update(msg)
+				}
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
+
+		if m.showSecrets {
+			switch msg.String() {
+			case "a":
+				m.addingSecret = true
+				m.stepSecretKey = true
+				m.secKeyIn.SetValue("")
+				m.secValIn.SetValue("")
+				m.secKeyIn.Focus()
+				return m, textinput.Blink
+			case "x", "d", "delete":
+				if it, ok := m.secList.SelectedItem().(secretItem); ok {
+					removeSecret(it.key)
+					m.refreshSecrets()
+				}
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.secList, cmd = m.secList.Update(msg)
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
 		}
 		if m.showVersionInput {
 			switch msg.String() {
@@ -325,11 +438,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.handleShortcutAction("Rollback")
 			case "l":
 				return m.handleShortcutAction("App Logs")
+			case "s":
+				m.showSecrets = true
+				m.refreshSecrets()
+				return m, nil
 			}
 		}
 
 		// Panel specific updates
-		if !m.showVersionInput && !m.showConfirm {
+		if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm {
 			switch m.activePanel {
 			case panelDestinations:
 				var cmd tea.Cmd
@@ -404,7 +521,7 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 
 	m.outputBuf = []string{"$ kamal " + strings.Join(args, " ")}
 
-	go runKamal(ctx, nil, args, m.lineCh, m.doneCh)
+	go runKamal(ctx, dest, nil, args, m.lineCh, m.doneCh)
 
 	m.viewport.SetContent(strings.Join(m.outputBuf, "\n"))
 	return m, tea.Batch(m.spinner.Tick, waitForLine(m.lineCh), waitForDone(m.doneCh))
@@ -416,6 +533,26 @@ func (m model) View() string {
 	}
 
 	// Render overlay if needed
+	if m.addingSecret {
+		content := lipgloss.JoinVertical(lipgloss.Left,
+			titleStyle.Render("Add New Secure Secret"),
+			"",
+			m.secKeyIn.View(),
+			"",
+			m.secValIn.View(),
+			"",
+			helpStyle.Render("enter: next/save · esc: cancel"),
+		)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(50).Render(content))
+	}
+	if m.showSecrets {
+		content := lipgloss.JoinVertical(lipgloss.Left,
+			m.secList.View(),
+			"",
+			helpStyle.Render("a: add secret · x/d: delete · esc: back"),
+		)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(m.width-6).Height(m.height-2).Render(content))
+	}
 	if m.showConfirm {
 		cmdStr := strings.Join(m.confirmCmd, " ")
 		content := lipgloss.JoinVertical(lipgloss.Left,
@@ -428,6 +565,7 @@ func (m model) View() string {
 		)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(m.width-10).Render(content))
 	}
+
 	leftW := 30
 	if m.width < 80 {
 		leftW = m.width / 3
@@ -469,7 +607,7 @@ func (m model) View() string {
 			"",
 			m.verInput.View(),
 		)
-		logContent = lipgloss.Place(rightW-4, bodyH-4, lipgloss.Center, lipgloss.Center, overlay)
+		logContent = lipgloss.Place(rightW-4, bodyH-4, lipgloss.Center, lipgloss.Center, activePanelStyle.Render(overlay))
 	}
 
 	logPanel = style.Width(rightW - 2).Height(bodyH - 2).Render(logContent)
@@ -498,7 +636,7 @@ func (m model) footerView() string {
 	if m.statusLine != "" {
 		actionHint += m.statusLine + " · "
 	}
-	left = actionHint + "d:deploy r:rollback l:logs tab:switch panel q:quit"
+	left = actionHint + "d:deploy r:rollback l:logs s:secrets tab:switch panel q:quit"
 	return statusBarStyle.Width(m.width).Render(left)
 }
 
