@@ -131,7 +131,7 @@ func initialModel() model {
 	vp := viewport.New(0, 0)
 
 	secList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	secList.Title = "Secure Secrets Manager"
+	secList.Title = "Secrets Manager"
 	secList.SetShowStatusBar(false)
 	secList.SetFilteringEnabled(false)
 	secList.SetShowHelp(false)
@@ -154,7 +154,7 @@ func initialModel() model {
 		verInput:    ti,
 		viewport:    vp,
 		spinner:     sp,
-		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and action.", "Press 's' to manage secure secrets."},
+		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and action.", "Press 's' to manage secrets."},
 		secList:     secList,
 		secKeyIn:    secKeyIn,
 		secValIn:    secValIn,
@@ -366,7 +366,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					val := strings.TrimSpace(m.secValIn.Value())
 					if val != "" {
-						addSecret(strings.TrimSpace(m.secKeyIn.Value()), val)
+						if err := addSecret(strings.TrimSpace(m.secKeyIn.Value()), val); err != nil {
+							m.statusLine = badStyle.Render("failed to save secret: " + err.Error())
+							return m, nil
+						}
 						m.addingSecret = false
 						m.secKeyIn.Blur()
 						m.secValIn.Blur()
@@ -397,7 +400,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, textinput.Blink
 			case "x", "d", "delete":
 				if it, ok := m.secList.SelectedItem().(secretItem); ok {
-					removeSecret(it.key)
+					if err := removeSecret(it.key); err != nil {
+						m.statusLine = badStyle.Render("failed to delete secret: " + err.Error())
+						return m, nil
+					}
 					m.refreshSecrets()
 				}
 				return m, nil
@@ -535,7 +541,7 @@ func (m model) View() string {
 	// Render overlay if needed
 	if m.addingSecret {
 		content := lipgloss.JoinVertical(lipgloss.Left,
-			titleStyle.Render("Add New Secure Secret"),
+			titleStyle.Render("Add New Secret"),
 			"",
 			m.secKeyIn.View(),
 			"",

@@ -252,7 +252,7 @@ func loadEnvForDest(dest string) []string {
 		}
 	}
 
-	// Load securely stored secrets from keychain
+	// Load secrets from keychain last so they intentionally override file values.
 	keychainSecrets := loadSecrets()
 	for k, v := range keychainSecrets {
 		envMap[k] = v

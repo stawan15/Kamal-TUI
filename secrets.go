@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -16,7 +18,8 @@ func getProjectID() string {
 	if err != nil {
 		return "kamal-tui"
 	}
-	return filepath.Base(cwd) + "-" + cwd
+	sum := sha256.Sum256([]byte(cwd))
+	return filepath.Base(cwd) + "-" + hex.EncodeToString(sum[:8])
 }
 
 func loadSecrets() map[string]string {
