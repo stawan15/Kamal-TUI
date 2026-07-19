@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -100,6 +101,12 @@ type model struct {
 	// Header info
 	projectName string
 	gitBranch   string
+
+	// Performance Dashboard
+	showDashboard  bool
+	dashStats      []ContainerStat
+	dashErr        error
+	dashLoading bool
 }
 
 // detectProjectName tries to get a short project name from the git remote URL
@@ -193,6 +200,24 @@ func (m model) Init() tea.Cmd {
 	return nil
 }
 
+// dashFetch runs pollDockerStats in a goroutine and returns the result as a Cmd.
+// dest is the currently selected Kamal destination (empty = default).
+func dashFetch(dest string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		stats, err := pollDockerStats(ctx, dest)
+		return dashRefreshMsg{stats: stats, err: err}
+	}
+}
+
+// dashTick schedules the next auto-refresh after dashPollInterval.
+func dashTick() tea.Cmd {
+	return tea.Tick(dashPollInterval, func(t time.Time) tea.Msg {
+		return dashTickMsg{}
+	})
+}
+
 func waitForLine(ch <-chan string) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-ch
@@ -281,6 +306,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 
+	case dashRefreshMsg:
+		m.dashLoading = false
+		m.dashStats = msg.stats
+		m.dashErr = msg.err
+		if m.showDashboard {
+			return m, dashTick()
+		}
+		return m, nil
+
+	case dashTickMsg:
+		if m.showDashboard {
+			dest := ""
+			if it, ok := m.destList.SelectedItem().(destItem); ok {
+				dest = string(it)
+			}
+			return m, dashFetch(dest)
+		}
+		return m, nil
+
 	case tea.MouseMsg:
 		if m.showSecrets || m.addingSecret || m.showVersionInput || m.showConfirm || m.showMenu {
 			return m, nil
@@ -309,6 +353,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "q":
+			if m.showDashboard {
+				m.showDashboard = false
+				return m, nil
+			}
 			if !m.showVersionInput && !m.running && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu {
 				if m.cancel != nil {
 					m.cancel()
@@ -316,6 +364,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		case "esc":
+			if m.showDashboard {
+				m.showDashboard = false
+				return m, nil
+			}
 			if m.showMenu {
 				m.showMenu = false
 				return m, nil
@@ -342,13 +394,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.running {
 				break // use ctrl+c to abort
 			}
+		case "r":
+			// Manual refresh when dashboard is open
+			if m.showDashboard {
+				m.dashLoading = true
+				dest := ""
+				if it, ok := m.destList.SelectedItem().(destItem); ok {
+					dest = string(it)
+				}
+				return m, dashFetch(dest)
+			}
 		case "tab":
-			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu {
+			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu && !m.showDashboard {
 				m.activePanel = (m.activePanel + 1) % 2
 				return m, nil
 			}
 		case "shift+tab":
-			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu {
+			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu && !m.showDashboard {
 				m.activePanel = (m.activePanel - 1 + 2) % 2
 				return m, nil
 			}
@@ -473,6 +535,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showSecrets = true
 				m.refreshSecrets()
 				return m, nil
+			case "p":
+				// Open Performance Dashboard for selected destination
+				m.showDashboard = true
+				m.dashLoading = true
+				dest := ""
+				if it, ok := m.destList.SelectedItem().(destItem); ok {
+					dest = string(it)
+				}
+				return m, tea.Batch(dashFetch(dest), dashTick())
 			// Direct shortcuts (without opening menu)
 			case "d":
 				return m.handleActionByKey("d")
@@ -603,6 +674,33 @@ func (m model) View() string {
 		return "loading…"
 	}
 
+	// ── Performance Dashboard overlay ──────────────────────────────────────
+	if m.showDashboard {
+		var content string
+		if m.dashLoading && len(m.dashStats) == 0 {
+			dest := ""
+			if it, ok := m.destList.SelectedItem().(destItem); ok {
+				dest = string(it)
+			}
+			destLabel := "default"
+			if dest != "" {
+				destLabel = dest
+			}
+			content = titleStyle.Render(fmt.Sprintf("󰐿  Container Performance  [dest: %s]", destLabel)) +
+				"\n\n" + helpStyle.Render("  SSH-ing into remote servers and fetching docker stats…")
+		} else {
+			dest := ""
+			if it, ok := m.destList.SelectedItem().(destItem); ok {
+				dest = string(it)
+			}
+			content = renderDashboard(m.dashStats, m.dashErr, m.width, dest)
+		}
+		return activePanelStyle.
+			Width(m.width - 4).
+			Height(m.height - 4).
+			Render(content)
+	}
+
 	// Menu overlay (highest priority after add-secret)
 	if m.addingSecret {
 		content := lipgloss.JoinVertical(lipgloss.Left,
@@ -711,7 +809,7 @@ func (m model) footerView() string {
 	if m.statusLine != "" {
 		actionHint += m.statusLine + "  "
 	}
-	left = actionHint + "d:deploy  x:menu  s:secrets  tab:panel  q:quit"
+	left = actionHint + "d:deploy  p:dashboard  x:menu  s:secrets  tab:panel  q:quit"
 	return statusBarStyle.Width(m.width).Render(left)
 }
 
