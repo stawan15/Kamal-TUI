@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -93,6 +95,41 @@ type model struct {
 	confirmAct  actionItem
 	confirmDest string
 	confirmVer  string
+
+	// Header info
+	projectName string
+	gitBranch   string
+}
+
+// detectProjectName tries to get a short project name from the git remote URL
+// or falls back to the current directory name.
+func detectProjectName() string {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err == nil {
+		remote := strings.TrimSpace(string(out))
+		// strip .git suffix and take last path component
+		remote = strings.TrimSuffix(remote, ".git")
+		parts := strings.FieldsFunc(remote, func(r rune) bool {
+			return r == '/' || r == ':'
+		})
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+	// fallback: current directory name
+	if cwd, err := os.Getwd(); err == nil {
+		return filepath.Base(cwd)
+	}
+	return "kamal-tui"
+}
+
+// detectGitBranch returns the current git branch name.
+func detectGitBranch() string {
+	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func initialModel() model {
@@ -101,7 +138,7 @@ func initialModel() model {
 		items = append(items, a)
 	}
 	al := list.New(items, list.NewDefaultDelegate(), 0, 0)
-	al.Title = "Actions"
+	al.Title = "Menu"
 	al.SetShowStatusBar(false)
 	al.SetFilteringEnabled(false)
 	al.SetShowHelp(false)
@@ -158,6 +195,8 @@ func initialModel() model {
 		secList:     secList,
 		secKeyIn:    secKeyIn,
 		secValIn:    secValIn,
+		projectName: detectProjectName(),
+		gitBranch:   detectGitBranch(),
 	}
 }
 
@@ -183,8 +222,9 @@ func waitForDone(ch <-chan error) tea.Cmd {
 }
 
 func (m *model) layout() {
+	headerH := 1
 	footerH := 1
-	bodyH := m.height - footerH
+	bodyH := m.height - headerH - footerH
 	if bodyH < 3 {
 		bodyH = 3
 	}
@@ -517,6 +557,7 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 	m.lineCh = make(chan string)
 	m.doneCh = make(chan error, 1)
 	m.running = true
+	m.selectedAction = action
 	m.outputBuf = nil
 	m.statusLine = ""
 	m.lastErr = nil
@@ -531,6 +572,26 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 
 	m.viewport.SetContent(strings.Join(m.outputBuf, "\n"))
 	return m, tea.Batch(m.spinner.Tick, waitForLine(m.lineCh), waitForDone(m.doneCh))
+}
+
+// headerView renders the top bar: empty left side + project::branch right-aligned.
+func (m model) headerView() string {
+	var label string
+	if m.gitBranch != "" {
+		label = m.projectName + " :: " + m.gitBranch
+	} else {
+		label = m.projectName
+	}
+	right := headerBranchStyle.Render(label)
+	// Pad left so right label is flush right
+	rightW := lipgloss.Width(right)
+	padding := m.width - rightW
+	if padding < 0 {
+		padding = 0
+	}
+	return lipgloss.NewStyle().Background(colorHeaderBg).Width(m.width).Render(
+		strings.Repeat(" ", padding) + right,
+	)
 }
 
 func (m model) View() string {
@@ -578,8 +639,9 @@ func (m model) View() string {
 	}
 	rightW := m.width - leftW
 
+	headerH := 1
 	footerH := 1
-	bodyH := m.height - footerH
+	bodyH := m.height - headerH - footerH
 
 	destH := bodyH / 2
 	actionH := bodyH - destH
@@ -593,18 +655,27 @@ func (m model) View() string {
 	}
 	destPanel = style.Width(leftW - 2).Height(destH - 2).Render(m.destList.View())
 
-	// Render Actions
+	// Render Menu (Actions)
 	style = inactivePanelStyle
 	if m.activePanel == panelActions {
 		style = activePanelStyle
 	}
 	actionPanel = style.Width(leftW - 2).Height(actionH - 2).Render(m.actionList.View())
 
-	// Render Logs
+	// Render Logs panel with dynamic title
 	style = inactivePanelStyle
 	if m.activePanel == panelLogs {
 		style = activePanelStyle
 	}
+
+	// Build log panel title: "{ActionName} logs" or just "logs"
+	logTitle := "logs"
+	if m.selectedAction.title != "" {
+		// Strip emoji from title for cleanliness
+		clean := strings.TrimSpace(m.selectedAction.title)
+		logTitle = clean + " logs"
+	}
+	logPanelTitle := logPanelTitleStyle.Render(logTitle)
 
 	logContent := m.viewport.View()
 	if m.showVersionInput {
@@ -616,12 +687,14 @@ func (m model) View() string {
 		logContent = lipgloss.Place(rightW-4, bodyH-4, lipgloss.Center, lipgloss.Center, activePanelStyle.Render(overlay))
 	}
 
-	logPanel = style.Width(rightW - 2).Height(bodyH - 2).Render(logContent)
+	// Compose log panel: title on top, viewport below, inside the border style
+	logInner := lipgloss.JoinVertical(lipgloss.Left, logPanelTitle, logContent)
+	logPanel = style.Width(rightW - 2).Height(bodyH - 2).Render(logInner)
 
 	leftCol := lipgloss.JoinVertical(lipgloss.Left, destPanel, actionPanel)
 	mainView := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, logPanel)
 
-	return lipgloss.JoinVertical(lipgloss.Left, mainView, m.footerView())
+	return lipgloss.JoinVertical(lipgloss.Left, m.headerView(), mainView, m.footerView())
 }
 
 func destLabel(d string) string {
