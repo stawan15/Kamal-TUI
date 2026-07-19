@@ -31,15 +31,23 @@ func actions() []actionItem {
 	return []actionItem{
 		{
 			key:   "d",
-			title: "Deploy",
+			title: "󰚰 Deploy",
 			desc:  "kamal deploy -d <destination>",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"deploy"}, dest)
 			},
 		},
 		{
+			key:   "U",
+			title: "󰒓 Setup",
+			desc:  "kamal setup -d <destination> (provision servers & deploy)",
+			buildArgs: func(dest, _ string) []string {
+				return withDest([]string{"setup"}, dest)
+			},
+		},
+		{
 			key:   "R",
-			title: "Redeploy",
+			title: "󰑙 Redeploy",
 			desc:  "kamal redeploy -d <destination>",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"redeploy"}, dest)
@@ -47,7 +55,7 @@ func actions() []actionItem {
 		},
 		{
 			key:          "r",
-			title:        "Rollback",
+			title:        "󰁯 Rollback",
 			desc:         "kamal rollback <version> -d <destination>",
 			needsVersion: true,
 			buildArgs: func(dest, version string) []string {
@@ -57,24 +65,40 @@ func actions() []actionItem {
 		},
 		{
 			key:   "e",
-			title: "Env Push",
-			desc:  "kamal env push -d <destination>",
+			title: "󰈙 Env Push",
+			desc:  "kamal env push -d <destination> (push .env variables to servers)",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"env", "push"}, dest)
 			},
 		},
 		{
+			key:   "A",
+			title: "󰋩 App Details",
+			desc:  "kamal app details -d <destination>",
+			buildArgs: func(dest, _ string) []string {
+				return withDest([]string{"app", "details"}, dest)
+			},
+		},
+		{
 			key:   "l",
-			title: "App Logs",
-			desc:  "kamal app logs -d <destination>",
+			title: "󰅩 App Logs",
+			desc:  "kamal app logs -d <destination> (last lines, no follow)",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"app", "logs"}, dest)
 			},
 		},
 		{
+			key:   "b",
+			title: "󰀵 App Boot",
+			desc:  "kamal app boot -d <destination>",
+			buildArgs: func(dest, _ string) []string {
+				return withDest([]string{"app", "boot"}, dest)
+			},
+		},
+		{
 			key:   "D",
-			title: "DB Dump",
-			desc:  "kamal app exec -i -- pg_dump ...",
+			title: "󰆼 DB Dump (Backup)",
+			desc:  "kamal app exec -i -- /bin/sh -c 'pg_dump ...'",
 			buildArgs: func(dest, _ string) []string {
 				args := []string{"app", "exec", "-i"}
 				args = withDest(args, dest)
@@ -84,8 +108,8 @@ func actions() []actionItem {
 		},
 		{
 			key:   "S",
-			title: "DB Restore",
-			desc:  "kamal app exec -i -- pg_restore ...",
+			title: "󰗨 DB Restore",
+			desc:  "kamal app exec -i -- /bin/sh -c 'pg_restore ...'",
 			buildArgs: func(dest, _ string) []string {
 				args := []string{"app", "exec", "-i"}
 				args = withDest(args, dest)
@@ -95,16 +119,16 @@ func actions() []actionItem {
 		},
 		{
 			key:   "a",
-			title: "Audit",
-			desc:  "kamal audit -d <destination>",
+			title: "󰚌 Audit",
+			desc:  "kamal audit -d <destination> (recent deploy history)",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"audit"}, dest)
 			},
 		},
 		{
 			key:   "X",
-			title: "Remove",
-			desc:  "kamal remove -d <destination>",
+			title: "󰆴 Remove",
+			desc:  "kamal remove -d <destination> (remove containers and images from servers)",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"remove"}, dest)
 			},
