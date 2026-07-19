@@ -16,6 +16,7 @@ import (
 
 // actionItem describes one action available in the main menu.
 type actionItem struct {
+	key          string
 	title        string
 	desc         string
 	needsVersion bool // rollback needs a version/commit hash typed in
@@ -29,35 +30,24 @@ func (a actionItem) FilterValue() string { return a.title }
 func actions() []actionItem {
 	return []actionItem{
 		{
-			title: "󰚰 Deploy",
+			key:   "d",
+			title: "Deploy",
 			desc:  "kamal deploy -d <destination>",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"deploy"}, dest)
 			},
 		},
 		{
-			title: "󰒓 Setup",
-			desc:  "kamal setup -d <destination> (provision servers & deploy)",
-			buildArgs: func(dest, _ string) []string {
-				return withDest([]string{"setup"}, dest)
-			},
-		},
-		{
-			title: "󰈙 Env Push",
-			desc:  "kamal env push -d <destination> (push .env variables to servers)",
-			buildArgs: func(dest, _ string) []string {
-				return withDest([]string{"env", "push"}, dest)
-			},
-		},
-		{
-			title: "󰑙 Redeploy",
-			desc:  "kamal redeploy -d <destination> (skip build cache invalidation steps)",
+			key:   "R",
+			title: "Redeploy",
+			desc:  "kamal redeploy -d <destination>",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"redeploy"}, dest)
 			},
 		},
 		{
-			title:        "󰁯 Rollback",
+			key:          "r",
+			title:        "Rollback",
 			desc:         "kamal rollback <version> -d <destination>",
 			needsVersion: true,
 			buildArgs: func(dest, version string) []string {
@@ -66,8 +56,25 @@ func actions() []actionItem {
 			},
 		},
 		{
-			title: "󰆼 DB Dump (Backup)",
-			desc:  "kamal app exec -i -- /bin/sh -c 'pg_dump ...'",
+			key:   "e",
+			title: "Env Push",
+			desc:  "kamal env push -d <destination>",
+			buildArgs: func(dest, _ string) []string {
+				return withDest([]string{"env", "push"}, dest)
+			},
+		},
+		{
+			key:   "l",
+			title: "App Logs",
+			desc:  "kamal app logs -d <destination>",
+			buildArgs: func(dest, _ string) []string {
+				return withDest([]string{"app", "logs"}, dest)
+			},
+		},
+		{
+			key:   "D",
+			title: "DB Dump",
+			desc:  "kamal app exec -i -- pg_dump ...",
 			buildArgs: func(dest, _ string) []string {
 				args := []string{"app", "exec", "-i"}
 				args = withDest(args, dest)
@@ -76,8 +83,9 @@ func actions() []actionItem {
 			},
 		},
 		{
-			title: "󰗨 DB Restore",
-			desc:  "kamal app exec -i -- /bin/sh -c 'pg_restore ...'",
+			key:   "S",
+			title: "DB Restore",
+			desc:  "kamal app exec -i -- pg_restore ...",
 			buildArgs: func(dest, _ string) []string {
 				args := []string{"app", "exec", "-i"}
 				args = withDest(args, dest)
@@ -86,41 +94,32 @@ func actions() []actionItem {
 			},
 		},
 		{
-			title: "󰋩 App Details",
-			desc:  "kamal app details -d <destination>",
-			buildArgs: func(dest, _ string) []string {
-				return withDest([]string{"app", "details"}, dest)
-			},
-		},
-		{
-			title: "󰅩 App Logs",
-			desc:  "kamal app logs -d <destination> (last lines, no follow)",
-			buildArgs: func(dest, _ string) []string {
-				return withDest([]string{"app", "logs"}, dest)
-			},
-		},
-		{
-			title: "󰀵 App Boot",
-			desc:  "kamal app boot -d <destination>",
-			buildArgs: func(dest, _ string) []string {
-				return withDest([]string{"app", "boot"}, dest)
-			},
-		},
-		{
-			title: "󰚌 Audit",
-			desc:  "kamal audit -d <destination> (recent deploy history)",
+			key:   "a",
+			title: "Audit",
+			desc:  "kamal audit -d <destination>",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"audit"}, dest)
 			},
 		},
 		{
-			title: "󰆴 Remove",
-			desc:  "kamal remove -d <destination> (remove containers and images from servers)",
+			key:   "X",
+			title: "Remove",
+			desc:  "kamal remove -d <destination>",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"remove"}, dest)
 			},
 		},
 	}
+}
+
+// actionByKey finds an action by its shortcut key.
+func actionByKey(key string) (actionItem, bool) {
+	for _, a := range actions() {
+		if a.key == key {
+			return a, true
+		}
+	}
+	return actionItem{}, false
 }
 
 // withDest appends "-d <dest>" unless dest is the empty/default destination.
