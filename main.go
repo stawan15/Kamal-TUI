@@ -20,7 +20,6 @@ type panel int
 
 const (
 	panelDestinations panel = iota
-	panelActions
 	panelLogs
 )
 
@@ -59,11 +58,10 @@ type model struct {
 
 	activePanel panel
 
-	actionList list.Model
-	destList   list.Model
-	verInput   textinput.Model
-	viewport   viewport.Model
-	spinner    spinner.Model
+	destList list.Model
+	verInput textinput.Model
+	viewport viewport.Model
+	spinner  spinner.Model
 
 	selectedAction actionItem
 	selectedDest   string
@@ -80,6 +78,9 @@ type model struct {
 
 	showVersionInput bool
 	versionAction    actionItem
+
+	// Menu overlay
+	showMenu bool
 
 	// Secrets Manager State
 	showSecrets   bool
@@ -133,17 +134,6 @@ func detectGitBranch() string {
 }
 
 func initialModel() model {
-	items := make([]list.Item, 0, len(actions()))
-	for _, a := range actions() {
-		items = append(items, a)
-	}
-	al := list.New(items, list.NewDefaultDelegate(), 0, 0)
-	al.Title = "Menu"
-	al.SetShowStatusBar(false)
-	al.SetFilteringEnabled(false)
-	al.SetShowHelp(false)
-	al.Styles.Title = titleStyle
-
 	dests := discoverDestinations()
 	ditems := make([]list.Item, 0, len(dests))
 	for _, d := range dests {
@@ -186,12 +176,11 @@ func initialModel() model {
 
 	return model{
 		activePanel: panelDestinations,
-		actionList:  al,
 		destList:    dl,
 		verInput:    ti,
 		viewport:    vp,
 		spinner:     sp,
-		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and action.", "Press 's' to manage secrets."},
+		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and press x for menu.", "Press 's' to manage secrets."},
 		secList:     secList,
 		secKeyIn:    secKeyIn,
 		secValIn:    secValIn,
@@ -234,11 +223,8 @@ func (m *model) layout() {
 	}
 	rightW := m.width - leftW
 
-	destH := bodyH / 2
-	actionH := bodyH - destH
-
-	m.destList.SetSize(leftW-4, destH-2)
-	m.actionList.SetSize(leftW-4, actionH-2)
+	// Destinations fills the full left column height
+	m.destList.SetSize(leftW-4, bodyH-2)
 
 	m.viewport.Width = rightW - 4
 	m.viewport.Height = bodyH - 2
@@ -255,16 +241,8 @@ func (m *model) refreshSecrets() {
 	m.secList.SetItems(items)
 }
 
-func (m model) handleShortcutAction(titleSubstr string) (tea.Model, tea.Cmd) {
-	var action actionItem
-	found := false
-	for _, a := range actions() {
-		if strings.Contains(a.title, titleSubstr) {
-			action = a
-			found = true
-			break
-		}
-	}
+func (m model) handleActionByKey(key string) (tea.Model, tea.Cmd) {
+	action, found := actionByKey(key)
 	if !found {
 		return m, nil
 	}
@@ -304,7 +282,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.showSecrets || m.addingSecret || m.showVersionInput || m.showConfirm {
+		if m.showSecrets || m.addingSecret || m.showVersionInput || m.showConfirm || m.showMenu {
 			return m, nil
 		}
 		leftW := 30
@@ -312,18 +290,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			leftW = m.width / 3
 		}
 		if msg.X < leftW {
-			destH := (m.height - 1) / 2
-			if msg.Y < destH {
-				m.activePanel = panelDestinations
-				var cmd tea.Cmd
-				m.destList, cmd = m.destList.Update(msg)
-				cmds = append(cmds, cmd)
-			} else {
-				m.activePanel = panelActions
-				var cmd tea.Cmd
-				m.actionList, cmd = m.actionList.Update(msg)
-				cmds = append(cmds, cmd)
-			}
+			m.activePanel = panelDestinations
+			var cmd tea.Cmd
+			m.destList, cmd = m.destList.Update(msg)
+			cmds = append(cmds, cmd)
 		} else {
 			m.activePanel = panelLogs
 			var cmd tea.Cmd
@@ -339,13 +309,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "q":
-			if !m.showVersionInput && !m.running && !m.showSecrets && !m.addingSecret && !m.showConfirm {
+			if !m.showVersionInput && !m.running && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu {
 				if m.cancel != nil {
 					m.cancel()
 				}
 				return m, tea.Quit
 			}
 		case "esc":
+			if m.showMenu {
+				m.showMenu = false
+				return m, nil
+			}
 			if m.showConfirm {
 				m.showConfirm = false
 				return m, nil
@@ -369,13 +343,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break // use ctrl+c to abort
 			}
 		case "tab":
-			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm {
-				m.activePanel = (m.activePanel + 1) % 3
+			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu {
+				m.activePanel = (m.activePanel + 1) % 2
 				return m, nil
 			}
 		case "shift+tab":
-			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm {
-				m.activePanel = (m.activePanel - 1 + 3) % 3
+			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu {
+				m.activePanel = (m.activePanel - 1 + 2) % 2
 				return m, nil
 			}
 		}
@@ -454,6 +428,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		}
+
 		if m.showVersionInput {
 			switch msg.String() {
 			case "enter":
@@ -476,39 +451,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
+		// Menu overlay: handle action key presses
+		if m.showMenu {
+			key := msg.String()
+			if _, found := actionByKey(key); found {
+				m.showMenu = false
+				return m.handleActionByKey(key)
+			}
+			// Unknown key — close menu
+			m.showMenu = false
+			return m, nil
+		}
+
+		// Normal mode shortcuts
 		if !m.running {
 			switch msg.String() {
-			case "d":
-				return m.handleShortcutAction("Deploy")
-			case "r":
-				return m.handleShortcutAction("Rollback")
-			case "l":
-				return m.handleShortcutAction("App Logs")
+			case "x":
+				m.showMenu = true
+				return m, nil
 			case "s":
 				m.showSecrets = true
 				m.refreshSecrets()
 				return m, nil
+			// Direct shortcuts (without opening menu)
+			case "d":
+				return m.handleActionByKey("d")
 			}
 		}
 
 		// Panel specific updates
-		if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm {
+		if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu {
 			switch m.activePanel {
 			case panelDestinations:
 				var cmd tea.Cmd
 				m.destList, cmd = m.destList.Update(msg)
 				cmds = append(cmds, cmd)
 				if msg.String() == "enter" {
-					m.activePanel = panelActions
-				}
-			case panelActions:
-				var cmd tea.Cmd
-				m.actionList, cmd = m.actionList.Update(msg)
-				cmds = append(cmds, cmd)
-				if msg.String() == "enter" {
-					if it, ok := m.actionList.SelectedItem().(actionItem); ok {
-						return m.handleShortcutAction(it.title)
-					}
+					m.activePanel = panelLogs
 				}
 			case panelLogs:
 				var cmd tea.Cmd
@@ -594,12 +573,37 @@ func (m model) headerView() string {
 	)
 }
 
+// menuView renders the LazyGit-style centered menu overlay.
+func (m model) menuView() string {
+	items := actions()
+	var rows []string
+
+	for _, a := range items {
+		key := menuKeyStyle.Render(fmt.Sprintf("%-3s", a.key))
+		sep := menuSepStyle.Render("  ")
+		desc := menuDescStyle.Render(a.title)
+		rows = append(rows, key+sep+desc)
+	}
+	rows = append(rows, "") // blank separator
+	rows = append(rows, menuKeyStyle.Render("esc")+"  "+menuDescStyle.Render("close"))
+
+	inner := lipgloss.JoinVertical(lipgloss.Left, rows...)
+	box := menuBoxStyle.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			titleStyle.Render("Menu"),
+			"",
+			inner,
+		),
+	)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
 func (m model) View() string {
 	if m.width == 0 {
 		return "loading…"
 	}
 
-	// Render overlay if needed
+	// Menu overlay (highest priority after add-secret)
 	if m.addingSecret {
 		content := lipgloss.JoinVertical(lipgloss.Left,
 			titleStyle.Render("Add New Secret"),
@@ -633,6 +637,7 @@ func (m model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(m.width-10).Render(content))
 	}
 
+	// ── Normal layout ─────────────────────────────────────────────────────
 	leftW := 30
 	if m.width < 80 {
 		leftW = m.width / 3
@@ -643,26 +648,14 @@ func (m model) View() string {
 	footerH := 1
 	bodyH := m.height - headerH - footerH
 
-	destH := bodyH / 2
-	actionH := bodyH - destH
-
-	var destPanel, actionPanel, logPanel string
-
-	// Render Destinations
+	// Render Destinations (full left column height)
 	style := inactivePanelStyle
 	if m.activePanel == panelDestinations {
 		style = activePanelStyle
 	}
-	destPanel = style.Width(leftW - 2).Height(destH - 2).Render(m.destList.View())
+	destPanel := style.Width(leftW - 2).Height(bodyH - 2).Render(m.destList.View())
 
-	// Render Menu (Actions)
-	style = inactivePanelStyle
-	if m.activePanel == panelActions {
-		style = activePanelStyle
-	}
-	actionPanel = style.Width(leftW - 2).Height(actionH - 2).Render(m.actionList.View())
-
-	// Render Logs panel with dynamic title
+	// Render Logs panel
 	style = inactivePanelStyle
 	if m.activePanel == panelLogs {
 		style = activePanelStyle
@@ -671,7 +664,6 @@ func (m model) View() string {
 	// Build log panel title: "{ActionName} logs" or just "logs"
 	logTitle := "logs"
 	if m.selectedAction.title != "" {
-		// Strip emoji from title for cleanliness
 		clean := strings.TrimSpace(m.selectedAction.title)
 		logTitle = clean + " logs"
 	}
@@ -687,14 +679,18 @@ func (m model) View() string {
 		logContent = lipgloss.Place(rightW-4, bodyH-4, lipgloss.Center, lipgloss.Center, activePanelStyle.Render(overlay))
 	}
 
-	// Compose log panel: title on top, viewport below, inside the border style
 	logInner := lipgloss.JoinVertical(lipgloss.Left, logPanelTitle, logContent)
-	logPanel = style.Width(rightW - 2).Height(bodyH - 2).Render(logInner)
+	logPanel := style.Width(rightW - 2).Height(bodyH - 2).Render(logInner)
 
-	leftCol := lipgloss.JoinVertical(lipgloss.Left, destPanel, actionPanel)
-	mainView := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, logPanel)
+	mainView := lipgloss.JoinHorizontal(lipgloss.Top, destPanel, logPanel)
+	base := lipgloss.JoinVertical(lipgloss.Left, m.headerView(), mainView, m.footerView())
 
-	return lipgloss.JoinVertical(lipgloss.Left, m.headerView(), mainView, m.footerView())
+	// Render menu overlay on top of base layout
+	if m.showMenu {
+		return m.menuView()
+	}
+
+	return base
 }
 
 func destLabel(d string) string {
@@ -709,13 +705,13 @@ func (m model) footerView() string {
 
 	actionHint := ""
 	if m.running {
-		actionHint = m.spinner.View() + " running... "
+		actionHint = m.spinner.View() + " running...  "
 	}
 
 	if m.statusLine != "" {
-		actionHint += m.statusLine + " · "
+		actionHint += m.statusLine + "  "
 	}
-	left = actionHint + "d:deploy r:rollback l:logs s:secrets tab:switch panel q:quit"
+	left = actionHint + "d:deploy  x:menu  s:secrets  tab:panel  q:quit"
 	return statusBarStyle.Width(m.width).Render(left)
 }
 
