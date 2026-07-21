@@ -4,7 +4,8 @@ A multi-panel, terminal UI (TUI) for managing [Kamal](https://kamal-deploy.org/)
 
 Built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea), it provides a fast, interactive, and secure way to manage your Rails/Docker applications.
 
-![Demo](https://github.com/stawan15/kamal-tui/assets/placeholder.png)
+<img width="1903" height="1035" alt="image" src="https://github.com/user-attachments/assets/537f3815-df49-4c42-8865-d3d8b0350f8b" />
+
 
 ## 🌟 Features
 
