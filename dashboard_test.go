@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseDockerStats(t *testing.T) {
 	raw := "web-1\t24.6%\t312MiB / 1GiB\t30.5%\t1.2MB / 840kB\t12.4MB / 3.1MB\n" +
@@ -47,9 +50,20 @@ func TestMockDockerStats(t *testing.T) {
 	if len(stats) != 3 {
 		t.Fatalf("got %d mock containers, want 3", len(stats))
 	}
-	for _, stat := range stats {
-		if stat.Host != "dev-production" {
-			t.Errorf("mock host = %q, want dev-production", stat.Host)
+	if stats[0].Host != "dev-production-1" || stats[1].Host != "dev-production-2" || stats[2].Host != "dev-production-3" {
+		t.Errorf("unexpected mock hosts: %q, %q, %q", stats[0].Host, stats[1].Host, stats[2].Host)
+	}
+}
+
+func TestRenderDashboardCardsGroupsServers(t *testing.T) {
+	stats := []ContainerStat{
+		{Host: "web-1", Name: "app-1", CPUPct: 20, MemPct: 30, StatusLv: "ok"},
+		{Host: "web-2", Name: "app-2", CPUPct: 90, MemPct: 88, StatusLv: "crit"},
+	}
+	view := renderDashboardCards(stats, 120, "production")
+	for _, want := range []string{"2 SERVERS", "2 CONTAINERS", "web-1", "web-2", "CRITICAL"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("dashboard view does not contain %q", want)
 		}
 	}
 }
