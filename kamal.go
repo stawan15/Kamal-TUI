@@ -272,13 +272,13 @@ func runMockKamal(ctx context.Context, args []string, lineCh chan<- string, done
 		"[dev] connecting to mock server...",
 	}
 	if len(args) >= 2 && args[0] == "app" && args[1] == "logs" {
-		lines = append(lines,
-			"web.1  | Started GET /health",
-			"web.1  | Completed 200 OK in 12ms",
-			"worker.1 | Processed 4 jobs",
-		)
+		lines = append(lines, mockLogLines(host)...)
 	} else {
-		lines = append(lines, "[dev] command completed successfully")
+		lines = append(lines,
+			"[dev] pulling image kamal-tui:demo",
+			"[dev] starting container web-1",
+			"[dev] command completed successfully",
+		)
 	}
 
 	for _, line := range lines {
@@ -290,6 +290,33 @@ func runMockKamal(ctx context.Context, args []string, lineCh chan<- string, done
 		}
 	}
 	doneCh <- nil
+}
+
+// mockLogLines is intentionally noisy and varied so developers can see the
+// log highlighting, viewport scrolling, and multi-server paging in --dev.
+func mockLogLines(host string) []string {
+	return []string{
+		"2026-09-09T21:14:02Z INFO  " + host + " deploy started version=2.1.0",
+		"2026-09-09T21:14:03Z DEBUG GET /health 200 12ms",
+		"2026-09-09T21:14:04Z INFO  GET /api/projects 200 48ms",
+		"2026-09-09T21:14:05Z INFO  POST /api/deployments 201 182ms",
+		"2026-09-09T21:14:06Z WARN  queue depth=74 latency=420ms",
+		"2026-09-09T21:14:07Z DEBUG worker processed job=sync-1842",
+		"2026-09-09T21:14:08Z INFO  GET https://registry.example.com/v2/health 200",
+		"2026-09-09T21:14:09Z ERROR GET /api/health 503 upstream timeout",
+		"2026-09-09T21:14:10Z WARN  retrying request attempt=2 backoff=500ms",
+		"2026-09-09T21:14:11Z INFO  GET /api/health 200 recovered=true",
+		"2026-09-09T21:14:12Z DEBUG cache miss key=deploy:latest",
+		"2026-09-09T21:14:13Z INFO  completed migration AddDeployments",
+		"2026-09-09T21:14:14Z INFO  successful release health check",
+		"2026-09-09T21:14:15Z ERROR database connection refused host=db.internal",
+		"2026-09-09T21:14:16Z WARN  reconnecting to postgres in 2s",
+		"2026-09-09T21:14:18Z INFO  database connection restored",
+		"2026-09-09T21:14:19Z TRACE DELETE /tmp/releases/old 204",
+		"2026-09-09T21:14:20Z INFO  GET / 200 6ms user=demo",
+		"2026-09-09T21:14:21Z PANIC worker crashed: simulated demo failure",
+		"2026-09-09T21:14:22Z INFO  process restarted successfully",
+	}
 }
 
 // loadEnvForDest reads secrets from standard kamal env locations

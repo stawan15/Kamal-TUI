@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -56,6 +57,26 @@ func (s secretItem) FilterValue() string { return s.key }
 type logLineMsg string
 type logStreamClosedMsg struct{}
 type cmdDoneMsg struct{ err error }
+type uiAnimationTickMsg struct{}
+
+const uiAnimationInterval = 180 * time.Millisecond
+
+var uiAnimationGlyphs = []string{"✦", "✧", "⋆", "✧"}
+
+const mascotArt = `             __
+        _.-'  '-._
+     .-'  _    _  '-.
+    /   _/ \__/ \_   \__
+   /   /  _      _ \     \
+  |   |  (o)    (o) |      )
+  |    \     __     /    _/
+   \    '-._/  \_.-'   _/
+    '-._           _.-'
+        \__ /\ __/
+       /  /  \  \
+      /__/    \__\`
+
+var logHighlightPattern = regexp.MustCompile(`(?i)\b(?:ERROR|FATAL|PANIC|WARN(?:ING)?|INFO|DEBUG|TRACE)\b|\b[1-5][0-9]{2}\b|https?://[^\s]+|\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+[^\s]+|\b(?:success(?:ful)?|failed|failure|started|completed)\b`)
 
 type model struct {
 	width, height int
@@ -114,6 +135,9 @@ type model struct {
 	dashStats     []ContainerStat
 	dashErr       error
 	dashLoading   bool
+
+	// Visual-only animation state. It never affects command behavior.
+	animFrame int
 }
 
 // detectProjectName tries to get a short project name from the git remote URL
@@ -149,12 +173,15 @@ func detectGitBranch() string {
 
 func initialModel() model {
 	dests := discoverDestinations()
+	if devMode {
+		dests = []string{"production", "staging", "preview"}
+	}
 	ditems := make([]list.Item, 0, len(dests))
 	for _, d := range dests {
 		ditems = append(ditems, destItem(d))
 	}
 	dl := list.New(ditems, list.NewDefaultDelegate(), 0, 0)
-	dl.Title = "Destinations"
+	dl.Title = ""
 	dl.SetShowStatusBar(false)
 	dl.SetFilteringEnabled(false)
 	dl.SetShowHelp(false)
@@ -172,7 +199,7 @@ func initialModel() model {
 	vp := viewport.New(0, 0)
 
 	secList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	secList.Title = "Secrets Manager"
+	secList.Title = ""
 	secList.SetShowStatusBar(false)
 	secList.SetFilteringEnabled(false)
 	secList.SetShowHelp(false)
@@ -188,13 +215,23 @@ func initialModel() model {
 	secValIn.EchoMode = textinput.EchoPassword
 	secValIn.EchoCharacter = '*'
 
+	welcomeView := mascotStyle.Render(mascotArt) +
+		"\n\n" +
+		sectionLabelStyle.Render("KAMAL // OPS DECK") +
+		"\n" +
+		helpStyle.Render("Select a target, then choose an action to begin.") +
+		"\n" +
+		helpStyle.Render("Press x for the command menu · p for the operations board")
+	vp.SetContent(welcomeView)
+	vp.GotoTop()
+
 	return model{
 		activePanel: panelDestinations,
 		destList:    dl,
 		verInput:    ti,
 		viewport:    vp,
 		spinner:     sp,
-		outputBuf:   []string{"Welcome to kamal-tui! Select a destination and press x for menu.", "Press 's' to manage secrets."},
+		outputBuf:   []string{welcomeView},
 		secList:     secList,
 		secKeyIn:    secKeyIn,
 		secValIn:    secValIn,
@@ -204,7 +241,51 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return uiAnimationTick()
+}
+
+func uiAnimationTick() tea.Cmd {
+	return tea.Tick(uiAnimationInterval, func(time.Time) tea.Msg {
+		return uiAnimationTickMsg{}
+	})
+}
+
+func (m model) animationGlyph() string {
+	return uiAnimationGlyphs[m.animFrame%len(uiAnimationGlyphs)]
+}
+
+// highlightLogLine adds semantic color to common log tokens while preserving
+// the original text. It intentionally stays framework-agnostic.
+func highlightLogLine(line string) string {
+	return logHighlightPattern.ReplaceAllStringFunc(line, func(token string) string {
+		lower := strings.ToLower(token)
+		switch {
+		case strings.Contains(lower, "error"), strings.Contains(lower, "fatal"), strings.Contains(lower, "panic"), strings.Contains(lower, "failed"), strings.Contains(lower, "failure"):
+			return logErrorStyle.Render(token)
+		case strings.Contains(lower, "warn"):
+			return logWarnStyle.Render(token)
+		case strings.Contains(lower, "success"), strings.Contains(lower, "started"), strings.Contains(lower, "completed"):
+			return logSuccessStyle.Render(token)
+		case lower == "info", lower == "debug", lower == "trace":
+			return logInfoStyle.Render(token)
+		case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"):
+			return logURLStyle.Render(token)
+		case strings.HasPrefix(lower, "get "), strings.HasPrefix(lower, "post "), strings.HasPrefix(lower, "put "), strings.HasPrefix(lower, "patch "), strings.HasPrefix(lower, "delete "), strings.HasPrefix(lower, "head "), strings.HasPrefix(lower, "options "):
+			return logHTTPStyle.Render(token)
+		default:
+			return logStatusStyle.Render(token)
+		}
+	})
+}
+
+func (m model) activeStyle() lipgloss.Style {
+	// Alternate between the accent colors to create a restrained pulse around
+	// the focused panel without changing layout or interaction behavior.
+	border := colorActive
+	if m.animFrame%6 >= 3 {
+		border = colorAccent
+	}
+	return activePanelStyle.BorderForeground(border)
 }
 
 // dashFetch runs pollDockerStats in a goroutine and returns the result as a Cmd.
@@ -256,10 +337,14 @@ func (m *model) layout() {
 	rightW := m.width - leftW
 
 	// Destinations fills the full left column height
-	m.destList.SetSize(leftW-4, bodyH-2)
+	listH := bodyH - 7
+	if listH < 3 {
+		listH = 3
+	}
+	m.destList.SetSize(leftW-4, listH)
 
 	m.viewport.Width = rightW - 4
-	m.viewport.Height = bodyH - 2
+	m.viewport.Height = listH
 
 	m.secList.SetSize(m.width-10, m.height-6)
 }
@@ -301,6 +386,11 @@ func (m model) handleActionByKey(key string) (tea.Model, tea.Cmd) {
 // setLogHosts discovers hosts for the selected Kamal destination. The first
 // entry is always the aggregate view; subsequent entries are individual hosts.
 func (m *model) setLogHosts(dest string) {
+	if devMode {
+		m.logHosts = []string{"", "web-1", "web-2", "worker-1", "worker-2"}
+		m.logHostIndex = 0
+		return
+	}
 	hosts, _, _ := readKamalHosts(dest)
 	m.logHosts = append([]string{""}, hosts...)
 	m.logHostIndex = 0
@@ -361,6 +451,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.layout()
 		return m, nil
+
+	case uiAnimationTickMsg:
+		m.animFrame = (m.animFrame + 1) % len(uiAnimationGlyphs)
+		return m, uiAnimationTick()
 
 	case dashRefreshMsg:
 		m.dashLoading = false
@@ -628,7 +722,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case logLineMsg:
-		m.outputBuf = append(m.outputBuf, string(msg))
+		m.outputBuf = append(m.outputBuf, highlightLogLine(string(msg)))
 		m.viewport.SetContent(strings.Join(m.outputBuf, "\n"))
 		m.viewport.GotoBottom()
 		return m, waitForLine(m.lineCh)
@@ -676,7 +770,7 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 	m.verInput.SetValue("")
 	args := m.logArgs(action, dest, version)
 
-	m.outputBuf = []string{"$ kamal " + strings.Join(args, " ")}
+	m.outputBuf = []string{highlightLogLine("$ kamal " + strings.Join(args, " "))}
 
 	go runKamal(ctx, dest, nil, args, m.lineCh, m.doneCh)
 
@@ -684,7 +778,7 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 	return m, tea.Batch(m.spinner.Tick, waitForLine(m.lineCh), waitForDone(m.doneCh))
 }
 
-// headerView renders the top bar: empty left side + project::branch right-aligned.
+// headerView renders the animated brand on the left and project::branch on the right.
 func (m model) headerView() string {
 	var label string
 	if m.gitBranch != "" {
@@ -692,16 +786,47 @@ func (m model) headerView() string {
 	} else {
 		label = m.projectName
 	}
+	brand := brandStyle.Render(m.animationGlyph() + "  KAMAL TUI")
+	state := "READY"
+	if m.running {
+		state = "● LIVE STREAM"
+	}
+	if devMode {
+		state = "◇ DEV MODE"
+	}
+	status := badgeStyle.Render(state)
 	right := headerBranchStyle.Render(label)
-	// Pad left so right label is flush right
-	rightW := lipgloss.Width(right)
-	padding := m.width - rightW
-	if padding < 0 {
-		padding = 0
+	padding := m.width - lipgloss.Width(brand) - lipgloss.Width(status) - lipgloss.Width(right)
+	if padding < 1 {
+		padding = 1
 	}
 	return lipgloss.NewStyle().Background(colorHeaderBg).Width(m.width).Render(
-		strings.Repeat(" ", padding) + right,
+		brand + status + strings.Repeat(" ", padding) + right,
 	)
+}
+
+func (m model) destinationPanelContent() string {
+	count := len(m.destList.Items())
+	heading := lipgloss.JoinHorizontal(lipgloss.Top,
+		sectionLabelStyle.Render("◈ TARGETS"),
+		badgeStyle.Render(fmt.Sprintf("%02d", count)),
+	)
+	meta := headerMetaStyle.Render("KAMAL DESTINATIONS  /  SELECT TARGET")
+	hint := helpStyle.Render("↑↓ navigate  ·  enter focus logs")
+	return lipgloss.JoinVertical(lipgloss.Left, heading, meta, m.destList.View(), hint)
+}
+
+func (m model) logPanelContent(logContent string) string {
+	target := "ALL SERVERS"
+	if m.selectedAction.key == "l" {
+		target = strings.ToUpper(m.logHostLabel())
+	}
+	heading := lipgloss.JoinHorizontal(lipgloss.Top,
+		sectionLabelStyle.Render("▣ ACTIVITY STREAM"),
+		badgeStyle.Render(target),
+	)
+	meta := headerMetaStyle.Render("REAL-TIME COMMAND OUTPUT  /  " + strings.ToUpper(m.projectName))
+	return lipgloss.JoinVertical(lipgloss.Left, heading, meta, logContent)
 }
 
 // menuView renders the LazyGit-style centered menu overlay.
@@ -721,7 +846,10 @@ func (m model) menuView() string {
 	inner := lipgloss.JoinVertical(lipgloss.Left, rows...)
 	box := menuBoxStyle.Render(
 		lipgloss.JoinVertical(lipgloss.Left,
-			titleStyle.Render("Menu"),
+			titleStyle.Render("KAMAL // OPS DECK"),
+			"",
+			mascotStyle.Render(mascotArt),
+			mascotCaptionStyle.Render("THE DEPLOY CAMEL"),
 			"",
 			inner,
 		),
@@ -755,7 +883,7 @@ func (m model) View() string {
 			}
 			content = renderDashboard(m.dashStats, m.dashErr, m.width, dest)
 		}
-		return activePanelStyle.
+		return m.activeStyle().
 			Width(m.width - 4).
 			Height(m.height - 4).
 			Render(content)
@@ -772,7 +900,7 @@ func (m model) View() string {
 			"",
 			helpStyle.Render("enter: next/save · esc: cancel"),
 		)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(50).Render(content))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.activeStyle().Width(50).Render(content))
 	}
 	if m.showSecrets {
 		content := lipgloss.JoinVertical(lipgloss.Left,
@@ -780,7 +908,7 @@ func (m model) View() string {
 			"",
 			helpStyle.Render("a: add secret · x/d: delete · esc: back"),
 		)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(m.width-6).Height(m.height-2).Render(content))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.activeStyle().Width(m.width-6).Height(m.height-2).Render(content))
 	}
 	if m.showConfirm {
 		cmdStr := strings.Join(m.confirmCmd, " ")
@@ -792,7 +920,7 @@ func (m model) View() string {
 			"",
 			helpStyle.Render("Press 'y' to confirm, 'n' or 'esc' to cancel"),
 		)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, activePanelStyle.Width(m.width-10).Render(content))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.activeStyle().Width(m.width-10).Render(content))
 	}
 
 	// ── Normal layout ─────────────────────────────────────────────────────
@@ -809,26 +937,15 @@ func (m model) View() string {
 	// Render Destinations (full left column height)
 	style := inactivePanelStyle
 	if m.activePanel == panelDestinations {
-		style = activePanelStyle
+		style = m.activeStyle()
 	}
-	destPanel := style.Width(leftW - 2).Height(bodyH - 2).Render(m.destList.View())
+	destPanel := style.Width(leftW - 2).Height(bodyH - 2).Render(m.destinationPanelContent())
 
 	// Render Logs panel
 	style = inactivePanelStyle
 	if m.activePanel == panelLogs {
-		style = activePanelStyle
+		style = m.activeStyle()
 	}
-
-	// Build log panel title: "{ActionName} logs" or just "logs"
-	logTitle := "logs"
-	if m.selectedAction.title != "" {
-		clean := strings.TrimSpace(m.selectedAction.title)
-		logTitle = clean + " logs"
-	}
-	if m.selectedAction.key == "l" {
-		logTitle += "  [" + m.logHostLabel() + "]"
-	}
-	logPanelTitle := logPanelTitleStyle.Render(logTitle)
 
 	logContent := m.viewport.View()
 	if m.showVersionInput {
@@ -837,10 +954,10 @@ func (m model) View() string {
 			"",
 			m.verInput.View(),
 		)
-		logContent = lipgloss.Place(rightW-4, bodyH-4, lipgloss.Center, lipgloss.Center, activePanelStyle.Render(overlay))
+		logContent = lipgloss.Place(rightW-4, bodyH-4, lipgloss.Center, lipgloss.Center, m.activeStyle().Render(overlay))
 	}
 
-	logInner := lipgloss.JoinVertical(lipgloss.Left, logPanelTitle, logContent)
+	logInner := m.logPanelContent(logContent)
 	logPanel := style.Width(rightW - 2).Height(bodyH - 2).Render(logInner)
 
 	mainView := lipgloss.JoinHorizontal(lipgloss.Top, destPanel, logPanel)
@@ -862,26 +979,29 @@ func destLabel(d string) string {
 }
 
 func (m model) footerView() string {
-	var left string
-
 	actionHint := ""
 	if m.running {
-		actionHint = m.spinner.View() + " running...  "
+		actionHint = m.spinner.View() + " RUNNING  "
 	}
 
 	if m.statusLine != "" {
 		actionHint += m.statusLine + "  "
 	}
-	modeHint := ""
-	if devMode {
-		modeHint = "DEV MODE  "
+	keys := []string{
+		keyCapStyle.Render("d") + " deploy",
+		keyCapStyle.Render("p") + " dashboard",
+		keyCapStyle.Render("x") + " menu",
+		keyCapStyle.Render("s") + " secrets",
+		keyCapStyle.Render("q") + " quit",
 	}
-	logHint := ""
 	if m.selectedAction.key == "l" && len(m.logHosts) > 1 {
-		logHint = "  [ / ]:log server"
+		keys = append(keys, keyCapStyle.Render("[ ]")+" servers")
 	}
-	left = modeHint + actionHint + "d:deploy  p:dashboard  x:menu  s:secrets  tab:panel  q:quit" + logHint
-	return statusBarStyle.Width(m.width).Render(left)
+	dock := strings.Join(keys, "   ")
+	if actionHint != "" || m.statusLine != "" {
+		dock = actionHint + m.statusLine + "   │   " + dock
+	}
+	return statusBarStyle.Width(m.width).Render(dock)
 }
 
 func main() {

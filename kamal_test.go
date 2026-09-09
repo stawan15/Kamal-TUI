@@ -32,7 +32,7 @@ func TestRunMockKamal(t *testing.T) {
 	devMode = true
 	defer func() { devMode = previous }()
 
-	linesCh := make(chan string, 10)
+	linesCh := make(chan string, 32)
 	doneCh := make(chan error, 1)
 	runKamal(context.Background(), "", nil, []string{"app", "logs", "--hosts", "10.0.0.12"}, linesCh, doneCh)
 
@@ -40,8 +40,8 @@ func TestRunMockKamal(t *testing.T) {
 	for line := range linesCh {
 		lines = append(lines, line)
 	}
-	if len(lines) != 6 {
-		t.Fatalf("got %d mock lines, want 6: %#v", len(lines), lines)
+	if len(lines) != 23 {
+		t.Fatalf("got %d mock lines, want 23: %#v", len(lines), lines)
 	}
 	if err := <-doneCh; err != nil {
 		t.Fatalf("mock command returned error: %v", err)

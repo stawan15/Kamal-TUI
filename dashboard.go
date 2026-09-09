@@ -84,6 +84,11 @@ var (
 	dashBarWarn = lipgloss.NewStyle().Foreground(colorWarning)
 	dashBarCrit = lipgloss.NewStyle().Foreground(colorBad)
 	dashBarBg   = lipgloss.NewStyle().Foreground(colorBorder)
+
+	dashSummaryStyle     = lipgloss.NewStyle().Bold(true).Foreground(colorFg).Padding(0, 1)
+	dashSummaryGoodStyle = lipgloss.NewStyle().Bold(true).Foreground(colorGood).Padding(0, 1)
+	dashSummaryWarnStyle = lipgloss.NewStyle().Bold(true).Foreground(colorWarning).Padding(0, 1)
+	dashSummaryCritStyle = lipgloss.NewStyle().Bold(true).Foreground(colorBad).Padding(0, 1)
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -192,14 +197,14 @@ const dashPollInterval = 8 * time.Second
 // mockDockerStats returns deterministic data for local UI development. It is
 // intentionally independent of Docker, SSH, and Kamal configuration.
 func mockDockerStats(dest string) []ContainerStat {
-	host := "dev-localhost"
+	hostPrefix := "dev-localhost"
 	if dest != "" {
-		host = "dev-" + dest
+		hostPrefix = "dev-" + dest
 	}
 	return []ContainerStat{
-		{Host: host, Name: "kamal-tui-web-1", CPUPct: 24.6, MemUsage: "312MiB", MemLimit: "1GiB", MemPct: 30.5, NetIn: "1.2MB", NetOut: "840kB", BlockIn: "12.4MB", BlockOut: "3.1MB", StatusLv: "ok"},
-		{Host: host, Name: "kamal-tui-worker-1", CPUPct: 58.2, MemUsage: "706MiB", MemLimit: "1GiB", MemPct: 68.9, NetIn: "4.8MB", NetOut: "2.3MB", BlockIn: "41.7MB", BlockOut: "8.6MB", StatusLv: "warn"},
-		{Host: host, Name: "kamal-tui-proxy-1", CPUPct: 86.4, MemUsage: "901MiB", MemLimit: "1GiB", MemPct: 88.0, NetIn: "18.6MB", NetOut: "15.2MB", BlockIn: "92.1MB", BlockOut: "27.4MB", StatusLv: "crit"},
+		{Host: hostPrefix + "-1", Name: "kamal-tui-web-1", CPUPct: 24.6, MemUsage: "312MiB", MemLimit: "1GiB", MemPct: 30.5, NetIn: "1.2MB", NetOut: "840kB", BlockIn: "12.4MB", BlockOut: "3.1MB", StatusLv: "ok"},
+		{Host: hostPrefix + "-2", Name: "kamal-tui-worker-1", CPUPct: 58.2, MemUsage: "706MiB", MemLimit: "1GiB", MemPct: 68.9, NetIn: "4.8MB", NetOut: "2.3MB", BlockIn: "41.7MB", BlockOut: "8.6MB", StatusLv: "warn"},
+		{Host: hostPrefix + "-3", Name: "kamal-tui-proxy-1", CPUPct: 86.4, MemUsage: "901MiB", MemLimit: "1GiB", MemPct: 88.0, NetIn: "18.6MB", NetOut: "15.2MB", BlockIn: "92.1MB", BlockOut: "27.4MB", StatusLv: "crit"},
 	}
 }
 
@@ -369,15 +374,6 @@ func containerStatusLevel(cpu, mem float64) string {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func renderDashboard(stats []ContainerStat, lastErr error, width int, dest string) string {
-	const (
-		colName   = 30
-		colCPU    = 9
-		colMem    = 22
-		colMemPct = 9
-		colNet    = 22
-		colBlk    = 20
-	)
-
 	var sb strings.Builder
 
 	// Title
@@ -401,76 +397,127 @@ func renderDashboard(stats []ContainerStat, lastErr error, width int, dest strin
 		return sb.String()
 	}
 
-	sep := dashSepStyle.Render(strings.Repeat("─", minInt(width-6, 118)))
+	return renderDashboardCards(stats, width, dest)
+}
 
-	// Column header
-	hdr := dashHdrStyle.Width(colName).Render(trunc("CONTAINER", colName-1)) +
-		dashHdrStyle.Width(colCPU).Render("CPU%") +
-		dashHdrStyle.Width(colMem).Render("MEM USAGE/LIMIT") +
-		dashHdrStyle.Width(colMemPct).Render("MEM%") +
-		dashHdrStyle.Width(colNet).Render("NET IN/OUT") +
-		dashHdrStyle.Width(colBlk).Render("BLK IN/OUT")
+// renderDashboardCards presents each Kamal server as a compact health card.
+// Wide terminals get a two-column board; narrow terminals stay single-column
+// so server boundaries remain easy to scan.
+func renderDashboardCards(stats []ContainerStat, width int, dest string) string {
+	var sb strings.Builder
+	destLabel := "default"
+	if dest != "" {
+		destLabel = dest
+	}
+	sb.WriteString(titleStyle.Render(fmt.Sprintf("󰐿  OPERATIONS BOARD  [dest: %s]", destLabel)) + "\n")
 
-	// Group stats by host
 	hostOrder := []string{}
 	byHost := map[string][]ContainerStat{}
-	for _, s := range stats {
-		if _, exists := byHost[s.Host]; !exists {
-			hostOrder = append(hostOrder, s.Host)
+	for _, stat := range stats {
+		if _, exists := byHost[stat.Host]; !exists {
+			hostOrder = append(hostOrder, stat.Host)
 		}
-		byHost[s.Host] = append(byHost[s.Host], s)
+		byHost[stat.Host] = append(byHost[stat.Host], stat)
 	}
 
+	okCount, warnCount, critCount := 0, 0, 0
+	for _, stat := range stats {
+		switch stat.StatusLv {
+		case "crit":
+			critCount++
+		case "warn":
+			warnCount++
+		default:
+			okCount++
+		}
+	}
+	summary := lipgloss.JoinHorizontal(lipgloss.Top,
+		dashSummaryStyle.Render(fmt.Sprintf("%d SERVERS", len(hostOrder))),
+		dashSummaryStyle.Render(fmt.Sprintf("%d CONTAINERS", len(stats))),
+		dashSummaryGoodStyle.Render(fmt.Sprintf("● %d OK", okCount)),
+		dashSummaryWarnStyle.Render(fmt.Sprintf("● %d WARN", warnCount)),
+		dashSummaryCritStyle.Render(fmt.Sprintf("● %d CRIT", critCount)),
+	)
+	sb.WriteString(summary + "\n\n")
+
+	available := maxInt(width-8, 30)
+	cols := 1
+	if available >= 96 {
+		cols = 2
+	}
+	cardGap := 2
+	cardWidth := available
+	if cols == 2 {
+		cardWidth = (available - cardGap) / cols
+	}
+
+	cards := make([]string, 0, len(hostOrder))
 	for _, host := range hostOrder {
-		hostStats := byHost[host]
+		cards = append(cards, renderHostCard(host, byHost[host], cardWidth))
+	}
+	for i := 0; i < len(cards); i += cols {
+		row := cards[i]
+		for j := 1; j < cols && i+j < len(cards); j++ {
+			row = lipgloss.JoinHorizontal(lipgloss.Top, row, strings.Repeat(" ", cardGap), cards[i+j])
+		}
+		sb.WriteString(row + "\n\n")
+	}
 
-		// Server section header
-		sb.WriteString(dashHostStyle.Render(fmt.Sprintf("󰒍  %s", host)) + "\n")
-		sb.WriteString("  " + hdr + "\n")
-		sb.WriteString("  " + sep + "\n")
+	sep := dashSepStyle.Render(strings.Repeat("─", minInt(width-6, 118)))
+	sb.WriteString(sep + "\n")
+	sb.WriteString(helpStyle.Render(fmt.Sprintf(
+		"  REFRESHED %s  ·  EVERY %ds  ·  r: refresh now  ·  esc: close",
+		time.Now().Format("15:04:05"), int(dashPollInterval.Seconds()),
+	)))
+	return sb.String()
+}
 
-		for _, s := range hostStats {
-			cpuStr := fmt.Sprintf("%.1f%%", s.CPUPct)
-			memStr := fmt.Sprintf("%s/%s", s.MemUsage, s.MemLimit)
-			memPctStr := fmt.Sprintf("%.1f%%", s.MemPct)
-			netStr := fmt.Sprintf("%s/%s", s.NetIn, s.NetOut)
-			blkStr := fmt.Sprintf("%s/%s", s.BlockIn, s.BlockOut)
-
-			indicator := dashOkStyle.Render("●")
-			switch s.StatusLv {
-			case "warn":
-				indicator = dashWarnStyle.Render("●")
-			case "crit":
-				indicator = dashCritStyle.Render("●")
-			}
-
-			row := "  " + indicator + " " +
-				dashCellStyle.Width(colName-3).Render(trunc(s.Name, colName-4)) +
-				colorizePct(cpuStr, s.CPUPct, 50, 80, colCPU) +
-				dashCellStyle.Width(colMem).Render(trunc(memStr, colMem-1)) +
-				colorizePct(memPctStr, s.MemPct, 70, 85, colMemPct) +
-				dashCellStyle.Width(colNet).Render(trunc(netStr, colNet-1)) +
-				dashCellStyle.Width(colBlk).Render(trunc(blkStr, colBlk-1))
-
-			sb.WriteString(row + "\n")
-
-			// Mini bars
-			cpuBar := miniBar(s.CPUPct, 30, s.StatusLv)
-			memBar := miniBar(s.MemPct, 30, s.StatusLv)
-			sb.WriteString(fmt.Sprintf("     %s CPU   %s MEM\n", cpuBar, memBar))
-			sb.WriteString("\n")
+func renderHostCard(host string, stats []ContainerStat, width int) string {
+	worst := "ok"
+	for _, stat := range stats {
+		if stat.StatusLv == "crit" {
+			worst = "crit"
+			break
+		}
+		if stat.StatusLv == "warn" {
+			worst = "warn"
 		}
 	}
 
-	// Footer
-	sb.WriteString("  " + sep + "\n")
-	ts := time.Now().Format("15:04:05")
-	sb.WriteString(helpStyle.Render(fmt.Sprintf(
-		"  Refreshed: %s  ·  Every %ds  ·  r: refresh now  ·  esc: close",
-		ts, int(dashPollInterval.Seconds()),
-	)))
+	status := dashOkStyle.Render("● HEALTHY")
+	if worst == "warn" {
+		status = dashWarnStyle.Render("● DEGRADED")
+	} else if worst == "crit" {
+		status = dashCritStyle.Render("● CRITICAL")
+	}
+	header := lipgloss.JoinHorizontal(lipgloss.Top,
+		dashHostStyle.Render("󰒍  "+trunc(host, maxInt(width-20, 8))),
+		status,
+	)
 
-	return sb.String()
+	rows := []string{header, dashSepStyle.Render(strings.Repeat("─", maxInt(width-4, 10)))}
+	for _, stat := range stats {
+		indicator := dashOkStyle.Render("●")
+		if stat.StatusLv == "warn" {
+			indicator = dashWarnStyle.Render("●")
+		} else if stat.StatusLv == "crit" {
+			indicator = dashCritStyle.Render("●")
+		}
+		nameWidth := maxInt(width-38, 10)
+		name := dashCellStyle.Render(trunc(stat.Name, nameWidth))
+		metrics := fmt.Sprintf("CPU %5.1f%%  MEM %5.1f%%", stat.CPUPct, stat.MemPct)
+		metricWidth := maxInt(width-nameWidth-4, 12)
+		rows = append(rows, indicator+" "+name+" "+colorizePct(metrics, stat.CPUPct, 50, 80, metricWidth))
+		rows = append(rows, "  "+miniBar(stat.CPUPct, maxInt(width/3, 8), stat.StatusLv)+"  "+miniBar(stat.MemPct, maxInt(width/3, 8), stat.StatusLv))
+	}
+
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBorder).
+		Background(colorPanelBg).
+		Padding(0, 1).
+		Width(width)
+	return cardStyle.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
 func colorizePct(s string, val, warnT, critT float64, w int) string {
@@ -522,6 +569,13 @@ func trunc(s string, n int) string {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b
