@@ -41,8 +41,9 @@ kamal-tui
 
 ### Developer mode
 
-Use developer mode to preview the dashboard without Docker, SSH, Kamal, or a
-Kamal project configuration. It supplies deterministic mock container data:
+Use developer mode to preview the dashboard and command flows without Docker,
+SSH, Kamal, or a Kamal project configuration. It supplies deterministic mock
+container data and mock command output:
 
 ```bash
 go run . --dev

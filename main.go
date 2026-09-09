@@ -885,7 +885,7 @@ func (m model) footerView() string {
 }
 
 func main() {
-	devFlag := flag.Bool("dev", false, "use mock dashboard data and skip external Docker/SSH dashboard calls")
+	devFlag := flag.Bool("dev", false, "use mock dashboard data and command output without Docker, SSH, or Kamal")
 	flag.Parse()
 	devMode = *devFlag || os.Getenv("KAMAL_TUI_DEV") == "1" || os.Getenv("KAMAL_TUI_DEV") == "true"
 
