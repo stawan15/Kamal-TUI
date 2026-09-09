@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+var devMode bool
 
 type panel int
 
@@ -77,6 +80,10 @@ type model struct {
 
 	outputBuf []string
 
+	// Log server paging. An empty host means all servers.
+	logHosts     []string
+	logHostIndex int
+
 	showVersionInput bool
 	versionAction    actionItem
 
@@ -103,10 +110,10 @@ type model struct {
 	gitBranch   string
 
 	// Performance Dashboard
-	showDashboard  bool
-	dashStats      []ContainerStat
-	dashErr        error
-	dashLoading bool
+	showDashboard bool
+	dashStats     []ContainerStat
+	dashErr       error
+	dashLoading   bool
 }
 
 // detectProjectName tries to get a short project name from the git remote URL
@@ -284,7 +291,56 @@ func (m model) handleActionByKey(key string) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	}
 
+	if action.key == "l" {
+		m.setLogHosts(dest)
+	}
+
 	return m.promptConfirm(action, dest, "")
+}
+
+// setLogHosts discovers hosts for the selected Kamal destination. The first
+// entry is always the aggregate view; subsequent entries are individual hosts.
+func (m *model) setLogHosts(dest string) {
+	hosts, _, _ := readKamalHosts(dest)
+	m.logHosts = append([]string{""}, hosts...)
+	m.logHostIndex = 0
+}
+
+func (m model) selectedLogHost() string {
+	if m.logHostIndex <= 0 || m.logHostIndex >= len(m.logHosts) {
+		return ""
+	}
+	return m.logHosts[m.logHostIndex]
+}
+
+func (m model) logHostLabel() string {
+	host := m.selectedLogHost()
+	if host == "" {
+		return "all servers"
+	}
+	return host
+}
+
+func (m model) logArgs(action actionItem, dest, version string) []string {
+	args := action.buildArgs(dest, version)
+	if action.key == "l" {
+		if host := m.selectedLogHost(); host != "" {
+			args = append(args, "--hosts", host)
+		}
+	}
+	return args
+}
+
+func (m model) switchLogHost(delta int) (tea.Model, tea.Cmd) {
+	if m.running || m.showConfirm || m.showMenu || m.showSecrets || m.addingSecret || m.showVersionInput || m.showDashboard || m.selectedAction.key != "l" || len(m.logHosts) < 2 {
+		return m, nil
+	}
+	m.logHostIndex = (m.logHostIndex + delta + len(m.logHosts)) % len(m.logHosts)
+	dest := ""
+	if it, ok := m.destList.SelectedItem().(destItem); ok {
+		dest = string(it)
+	}
+	return m.startRun(m.selectedAction, dest, "")
 }
 
 func (m model) promptConfirm(action actionItem, dest, version string) (tea.Model, tea.Cmd) {
@@ -404,6 +460,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, dashFetch(dest)
 			}
+		case "[":
+			return m.switchLogHost(-1)
+		case "]":
+			return m.switchLogHost(1)
 		case "tab":
 			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu && !m.showDashboard {
 				m.activePanel = (m.activePanel + 1) % 2
@@ -614,7 +674,7 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 	m.verInput.Blur()
 
 	m.verInput.SetValue("")
-	args := action.buildArgs(dest, version)
+	args := m.logArgs(action, dest, version)
 
 	m.outputBuf = []string{"$ kamal " + strings.Join(args, " ")}
 
@@ -765,6 +825,9 @@ func (m model) View() string {
 		clean := strings.TrimSpace(m.selectedAction.title)
 		logTitle = clean + " logs"
 	}
+	if m.selectedAction.key == "l" {
+		logTitle += "  [" + m.logHostLabel() + "]"
+	}
 	logPanelTitle := logPanelTitleStyle.Render(logTitle)
 
 	logContent := m.viewport.View()
@@ -809,13 +872,27 @@ func (m model) footerView() string {
 	if m.statusLine != "" {
 		actionHint += m.statusLine + "  "
 	}
-	left = actionHint + "d:deploy  p:dashboard  x:menu  s:secrets  tab:panel  q:quit"
+	modeHint := ""
+	if devMode {
+		modeHint = "DEV MODE  "
+	}
+	logHint := ""
+	if m.selectedAction.key == "l" && len(m.logHosts) > 1 {
+		logHint = "  [ / ]:log server"
+	}
+	left = modeHint + actionHint + "d:deploy  p:dashboard  x:menu  s:secrets  tab:panel  q:quit" + logHint
 	return statusBarStyle.Width(m.width).Render(left)
 }
 
 func main() {
-	if _, _, ok := kamalBinaryAvailable(); !ok {
-		fmt.Fprintln(os.Stderr, "warning: kamal binary not found yet (checked PATH, bin/kamal, bundle exec). Run this from your Rails project root, or install kamal first.")
+	devFlag := flag.Bool("dev", false, "use mock dashboard data and skip external Docker/SSH dashboard calls")
+	flag.Parse()
+	devMode = *devFlag || os.Getenv("KAMAL_TUI_DEV") == "1" || os.Getenv("KAMAL_TUI_DEV") == "true"
+
+	if !devMode {
+		if _, _, ok := kamalBinaryAvailable(); !ok {
+			fmt.Fprintln(os.Stderr, "warning: kamal binary not found yet (checked PATH, bin/kamal, bundle exec). Run this from your Rails project root, or install kamal first.")
+		}
 	}
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {

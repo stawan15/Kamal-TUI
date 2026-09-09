@@ -189,12 +189,30 @@ func extractHosts(raw interface{}, seen map[string]bool) {
 
 const dashPollInterval = 8 * time.Second
 
+// mockDockerStats returns deterministic data for local UI development. It is
+// intentionally independent of Docker, SSH, and Kamal configuration.
+func mockDockerStats(dest string) []ContainerStat {
+	host := "dev-localhost"
+	if dest != "" {
+		host = "dev-" + dest
+	}
+	return []ContainerStat{
+		{Host: host, Name: "kamal-tui-web-1", CPUPct: 24.6, MemUsage: "312MiB", MemLimit: "1GiB", MemPct: 30.5, NetIn: "1.2MB", NetOut: "840kB", BlockIn: "12.4MB", BlockOut: "3.1MB", StatusLv: "ok"},
+		{Host: host, Name: "kamal-tui-worker-1", CPUPct: 58.2, MemUsage: "706MiB", MemLimit: "1GiB", MemPct: 68.9, NetIn: "4.8MB", NetOut: "2.3MB", BlockIn: "41.7MB", BlockOut: "8.6MB", StatusLv: "warn"},
+		{Host: host, Name: "kamal-tui-proxy-1", CPUPct: 86.4, MemUsage: "901MiB", MemLimit: "1GiB", MemPct: 88.0, NetIn: "18.6MB", NetOut: "15.2MB", BlockIn: "92.1MB", BlockOut: "27.4MB", StatusLv: "crit"},
+	}
+}
+
 // pollDockerStats fetches container stats from ALL remote Kamal servers.
 // It SSHes into each host (in parallel) and runs `docker stats --no-stream`.
 func pollDockerStats(ctx context.Context, dest string) ([]ContainerStat, error) {
+	if devMode {
+		return mockDockerStats(dest), nil
+	}
+
 	hosts, sshUser, sshPort := readKamalHosts(dest)
 
-	// Fallback to local docker if no config found (dev mode)
+	// Fallback to local Docker if no Kamal config is found.
 	if len(hosts) == 0 {
 		return pollLocalDockerStats(ctx)
 	}
