@@ -39,6 +39,20 @@ cd your-rails-project
 kamal-tui
 ```
 
+### Developer mode
+
+Use developer mode to preview the dashboard without Docker, SSH, Kamal, or a
+Kamal project configuration. It supplies deterministic mock container data:
+
+```bash
+go run . --dev
+# or, after building:
+./kamal-tui --dev
+```
+
+Then press `p` to open the dashboard. The footer shows `DEV MODE` while it is
+active. You can also enable it with `KAMAL_TUI_DEV=1 kamal-tui`.
+
 ### Keyboard Shortcuts
 
 | Key | Action |
@@ -49,6 +63,11 @@ kamal-tui
 | `s` | Open Secure Secrets Manager |
 | `tab` | Switch between Destinations, Actions, and Logs panels |
 | `q` | Quit |
+
+When `config/deploy.yml` contains multiple Kamal servers, `l` initially shows
+the combined app logs. After the command finishes, use `[` and `]` to switch
+between all servers and each individual server; the selected server is shown
+in the log panel title and the command is rerun with Kamal's `--hosts` option.
 
 ### 🔐 Managing Secrets Securely
 
