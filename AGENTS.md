@@ -51,8 +51,8 @@ go run . --dev
 ```
 
 Press `p` to open the dashboard. Developer mode uses deterministic mock data
-and displays `DEV MODE` in the footer; it is also available through
-`KAMAL_TUI_DEV=1`.
+and command output, displays `DEV MODE` in the footer, and is also available
+through `KAMAL_TUI_DEV=1`.
 
 Before a release-related change, also verify the GoReleaser configuration if
 GoReleaser is installed:

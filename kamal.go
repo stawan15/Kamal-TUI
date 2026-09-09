@@ -212,6 +212,11 @@ func kamalBinaryAvailable() (bin string, args []string, ok bool) {
 // output) and sending the final error (nil on success) to doneCh exactly
 // once. Cancel ctx to kill the process early.
 func runKamal(ctx context.Context, dest string, prefixArgs []string, args []string, lineCh chan<- string, doneCh chan<- error) {
+	if devMode {
+		runMockKamal(ctx, args, lineCh, doneCh)
+		return
+	}
+
 	full := append(append([]string{}, prefixArgs...), args...)
 	bin, extra, ok := kamalBinaryAvailable()
 	if !ok {
@@ -247,6 +252,44 @@ func runKamal(ctx context.Context, dest string, prefixArgs []string, args []stri
 		pw.Close()
 		doneCh <- waitErr
 	}()
+}
+
+// runMockKamal exercises the command output UI without invoking Kamal. It is
+// used by --dev for safely testing deploy, rollback, and log interactions.
+func runMockKamal(ctx context.Context, args []string, lineCh chan<- string, doneCh chan<- error) {
+	defer close(lineCh)
+
+	host := "all servers"
+	for i, arg := range args {
+		if arg == "--hosts" && i+1 < len(args) {
+			host = args[i+1]
+		}
+	}
+
+	lines := []string{
+		"[dev] mock Kamal command: kamal " + strings.Join(args, " "),
+		"[dev] target: " + host,
+		"[dev] connecting to mock server...",
+	}
+	if len(args) >= 2 && args[0] == "app" && args[1] == "logs" {
+		lines = append(lines,
+			"web.1  | Started GET /health",
+			"web.1  | Completed 200 OK in 12ms",
+			"worker.1 | Processed 4 jobs",
+		)
+	} else {
+		lines = append(lines, "[dev] command completed successfully")
+	}
+
+	for _, line := range lines {
+		select {
+		case lineCh <- line:
+		case <-ctx.Done():
+			doneCh <- ctx.Err()
+			return
+		}
+	}
+	doneCh <- nil
 }
 
 // loadEnvForDest reads secrets from standard kamal env locations
