@@ -44,6 +44,16 @@ go build -o kamal-tui .
 ./kamal-tui
 ```
 
+To work on the dashboard without Docker, SSH, Kamal, or a project config:
+
+```bash
+go run . --dev
+```
+
+Press `p` to open the dashboard. Developer mode uses deterministic mock data
+and displays `DEV MODE` in the footer; it is also available through
+`KAMAL_TUI_DEV=1`.
+
 Before a release-related change, also verify the GoReleaser configuration if
 GoReleaser is installed:
 
@@ -88,6 +98,9 @@ discovery, environment precedence, YAML parsing, and Docker-stat parsing.
 - The dashboard currently invokes SSH with batch mode and parses Kamal deploy
   YAML. Preserve bounded timeouts and be careful when changing remote command
   construction.
+- Multi-server app logs use Kamal's `--hosts` option. Keep the aggregate log
+  view as the default and preserve `[`/`]` server paging when changing the log
+  action or destination handling.
 - Database dump/restore and `kamal remove` affect real deployments. New actions
   should be explicit, confirmed, and documented.
 
