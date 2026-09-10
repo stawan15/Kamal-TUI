@@ -21,8 +21,20 @@ func TestLogArgsForHost(t *testing.T) {
 		t.Fatal("log action not found")
 	}
 	m := model{logHosts: []string{"", "10.0.0.12"}, logHostIndex: 1}
-	want := []string{"app", "logs", "-d", "production", "--hosts", "10.0.0.12"}
+	want := []string{"app", "logs", "-d", "production", "-f", "--hosts", "10.0.0.12"}
 	if got := m.logArgs(action, "production", ""); !reflect.DeepEqual(got, want) {
+		t.Fatalf("log args = %#v, want %#v", got, want)
+	}
+}
+
+func TestLogArgsFollowAndGrep(t *testing.T) {
+	action, ok := actionByKey("l")
+	if !ok {
+		t.Fatal("log action not found")
+	}
+	m := model{logFilter: "request-id-42"}
+	want := []string{"app", "logs", "-f", "--grep", "request-id-42"}
+	if got := m.logArgs(action, "", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("log args = %#v, want %#v", got, want)
 	}
 }

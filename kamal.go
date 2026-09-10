@@ -82,7 +82,7 @@ func actions() []actionItem {
 		{
 			key:   "l",
 			title: "󰅩 App Logs",
-			desc:  "kamal app logs -d <destination> (last lines, no follow)",
+			desc:  "kamal app logs -f -d <destination> (live tail)",
 			buildArgs: func(dest, _ string) []string {
 				return withDest([]string{"app", "logs"}, dest)
 			},

@@ -101,6 +101,8 @@ discovery, environment precedence, YAML parsing, and Docker-stat parsing.
 - Multi-server app logs use Kamal's `--hosts` option. Keep the aggregate log
   view as the default and preserve `[`/`]` server paging when changing the log
   action or destination handling.
+- App logs run with Kamal's `-f` follow mode. Preserve `/` grep filtering,
+  `c` clipboard export, scroll-to-pause, and `End` to resume the live tail.
 - Database dump/restore and `kamal remove` affect real deployments. New actions
   should be explicit, confirmed, and documented.
 

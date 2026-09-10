@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -77,6 +78,7 @@ const mascotArt = `             __
       /__/    \__\`
 
 var logHighlightPattern = regexp.MustCompile(`(?i)\b(?:ERROR|FATAL|PANIC|WARN(?:ING)?|INFO|DEBUG|TRACE)\b|\b[1-5][0-9]{2}\b|https?://[^\s]+|\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+[^\s]+|\b(?:success(?:ful)?|failed|failure|started|completed)\b`)
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 
 type model struct {
 	width, height int
@@ -100,6 +102,11 @@ type model struct {
 	cancel context.CancelFunc
 
 	outputBuf []string
+
+	logFilter     string
+	logFilterIn   textinput.Model
+	showLogFilter bool
+	logFollowing  bool
 
 	// Log server paging. An empty host means all servers.
 	logHosts     []string
@@ -215,6 +222,11 @@ func initialModel() model {
 	secValIn.EchoMode = textinput.EchoPassword
 	secValIn.EchoCharacter = '*'
 
+	logFilterIn := textinput.New()
+	logFilterIn.Prompt = "/ "
+	logFilterIn.Placeholder = "grep logs..."
+	logFilterIn.CharLimit = 128
+
 	welcomeView := mascotStyle.Render(mascotArt) +
 		"\n\n" +
 		sectionLabelStyle.Render("KAMAL // OPS DECK") +
@@ -226,17 +238,19 @@ func initialModel() model {
 	vp.GotoTop()
 
 	return model{
-		activePanel: panelDestinations,
-		destList:    dl,
-		verInput:    ti,
-		viewport:    vp,
-		spinner:     sp,
-		outputBuf:   []string{welcomeView},
-		secList:     secList,
-		secKeyIn:    secKeyIn,
-		secValIn:    secValIn,
-		projectName: detectProjectName(),
-		gitBranch:   detectGitBranch(),
+		activePanel:  panelDestinations,
+		destList:     dl,
+		verInput:     ti,
+		viewport:     vp,
+		spinner:      sp,
+		outputBuf:    []string{welcomeView},
+		logFilterIn:  logFilterIn,
+		logFollowing: true,
+		secList:      secList,
+		secKeyIn:     secKeyIn,
+		secValIn:     secValIn,
+		projectName:  detectProjectName(),
+		gitBranch:    detectGitBranch(),
 	}
 }
 
@@ -344,7 +358,11 @@ func (m *model) layout() {
 	m.destList.SetSize(leftW-4, listH)
 
 	m.viewport.Width = rightW - 4
-	m.viewport.Height = listH
+	logH := bodyH - 8
+	if logH < 3 {
+		logH = 3
+	}
+	m.viewport.Height = logH
 
 	m.secList.SetSize(m.width-10, m.height-6)
 }
@@ -414,11 +432,52 @@ func (m model) logHostLabel() string {
 func (m model) logArgs(action actionItem, dest, version string) []string {
 	args := action.buildArgs(dest, version)
 	if action.key == "l" {
+		args = append(args, "-f")
 		if host := m.selectedLogHost(); host != "" {
 			args = append(args, "--hosts", host)
 		}
+		if m.logFilter != "" {
+			args = append(args, "--grep", m.logFilter)
+		}
 	}
 	return args
+}
+
+func (m *model) openLogFilter() tea.Cmd {
+	m.showLogFilter = true
+	m.logFilterIn.SetValue(m.logFilter)
+	m.logFilterIn.Focus()
+	return textinput.Blink
+}
+
+func (m model) applyLogFilter() (tea.Model, tea.Cmd) {
+	m.logFilter = strings.TrimSpace(m.logFilterIn.Value())
+	m.showLogFilter = false
+	m.logFilterIn.Blur()
+	if m.selectedAction.key != "l" {
+		return m, nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+	}
+	dest := ""
+	if it, ok := m.destList.SelectedItem().(destItem); ok {
+		dest = string(it)
+	}
+	return m.startRun(m.selectedAction, dest, "")
+}
+
+func (m model) copyLogs() (tea.Model, tea.Cmd) {
+	if len(m.outputBuf) == 0 {
+		return m, nil
+	}
+	raw := ansiEscapePattern.ReplaceAllString(strings.Join(m.outputBuf, "\n"), "")
+	if err := clipboard.WriteAll(raw); err != nil {
+		m.statusLine = badStyle.Render("copy failed: " + err.Error())
+	} else {
+		m.statusLine = okStyle.Render("log copied")
+	}
+	return m, nil
 }
 
 func (m model) switchLogHost(delta int) (tea.Model, tea.Cmd) {
@@ -438,7 +497,7 @@ func (m model) promptConfirm(action actionItem, dest, version string) (tea.Model
 	m.confirmAct = action
 	m.confirmDest = dest
 	m.confirmVer = version
-	args := action.buildArgs(dest, version)
+	args := m.logArgs(action, dest, version)
 	m.confirmCmd = append([]string{"kamal"}, args...)
 	return m, nil
 }
@@ -496,6 +555,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		if m.showLogFilter {
+			switch msg.String() {
+			case "enter":
+				return m.applyLogFilter()
+			case "esc":
+				m.showLogFilter = false
+				m.logFilterIn.Blur()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.logFilterIn, cmd = m.logFilterIn.Update(msg)
+				return m, cmd
+			}
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			if m.cancel != nil {
@@ -541,6 +614,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.verInput.Blur()
 				return m, nil
 			}
+			if m.showLogFilter {
+				m.showLogFilter = false
+				m.logFilterIn.Blur()
+				return m, nil
+			}
 			if m.running {
 				break // use ctrl+c to abort
 			}
@@ -558,6 +636,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.switchLogHost(-1)
 		case "]":
 			return m.switchLogHost(1)
+		case "/":
+			if m.selectedAction.key == "l" && !m.showConfirm && !m.showMenu && !m.showDashboard {
+				return m, m.openLogFilter()
+			}
+		case "c":
+			if m.selectedAction.key == "l" && !m.showConfirm && !m.showMenu && !m.showDashboard {
+				return m.copyLogs()
+			}
 		case "tab":
 			if !m.showVersionInput && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu && !m.showDashboard {
 				m.activePanel = (m.activePanel + 1) % 2
@@ -715,6 +801,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.activePanel = panelLogs
 				}
 			case panelLogs:
+				if m.selectedAction.key == "l" {
+					switch msg.String() {
+					case "up", "pageup", "ctrl+u", "home":
+						m.logFollowing = false
+					case "end":
+						m.logFollowing = true
+					}
+				}
 				var cmd tea.Cmd
 				m.viewport, cmd = m.viewport.Update(msg)
 				cmds = append(cmds, cmd)
@@ -722,9 +816,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case logLineMsg:
-		m.outputBuf = append(m.outputBuf, highlightLogLine(string(msg)))
+		line := string(msg)
+		if m.logFilter != "" && !strings.Contains(strings.ToLower(line), strings.ToLower(m.logFilter)) {
+			return m, waitForLine(m.lineCh)
+		}
+		m.outputBuf = append(m.outputBuf, highlightLogLine(line))
 		m.viewport.SetContent(strings.Join(m.outputBuf, "\n"))
-		m.viewport.GotoBottom()
+		if m.logFollowing {
+			m.viewport.GotoBottom()
+		}
 		return m, waitForLine(m.lineCh)
 
 	case logStreamClosedMsg:
@@ -763,6 +863,7 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 	m.running = true
 	m.selectedAction = action
 	m.outputBuf = nil
+	m.logFollowing = true
 	m.statusLine = ""
 	m.lastErr = nil
 	m.verInput.Blur()
@@ -826,7 +927,17 @@ func (m model) logPanelContent(logContent string) string {
 		badgeStyle.Render(target),
 	)
 	meta := headerMetaStyle.Render("REAL-TIME COMMAND OUTPUT  /  " + strings.ToUpper(m.projectName))
-	return lipgloss.JoinVertical(lipgloss.Left, heading, meta, logContent)
+	filter := helpStyle.Render("/ grep  ·  c copy  ·  ↑↓ scroll  ·  End live tail")
+	if m.logFilter != "" {
+		filter = logFilterStyle.Render("grep: "+m.logFilter) + "  " + filter
+	}
+	if m.selectedAction.key == "l" && !m.logFollowing {
+		filter += "  " + logPausedStyle.Render("PAUSED")
+	}
+	if m.showLogFilter {
+		filter = m.logFilterIn.View() + "  " + helpStyle.Render("enter apply · esc cancel")
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, heading, meta, filter, logContent)
 }
 
 // menuView renders the LazyGit-style centered menu overlay.
