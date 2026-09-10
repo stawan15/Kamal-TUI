@@ -55,9 +55,15 @@ func (s secretItem) Title() string       { return s.key }
 func (s secretItem) Description() string { return "********" }
 func (s secretItem) FilterValue() string { return s.key }
 
-type logLineMsg string
-type logStreamClosedMsg struct{}
-type cmdDoneMsg struct{ err error }
+type logLineMsg struct {
+	runID uint64
+	line  string
+}
+type logStreamClosedMsg struct{ runID uint64 }
+type cmdDoneMsg struct {
+	runID uint64
+	err   error
+}
 type uiAnimationTickMsg struct{}
 
 const uiAnimationInterval = 180 * time.Millisecond
@@ -97,9 +103,11 @@ type model struct {
 	statusLine string
 	lastErr    error
 
-	lineCh chan string
-	doneCh chan error
-	cancel context.CancelFunc
+	lineCh    chan string
+	doneCh    chan error
+	cancel    context.CancelFunc
+	runID     uint64
+	cancelled bool
 
 	outputBuf []string
 
@@ -320,20 +328,20 @@ func dashTick() tea.Cmd {
 	})
 }
 
-func waitForLine(ch <-chan string) tea.Cmd {
+func waitForLine(ch <-chan string, runID uint64) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-ch
 		if !ok {
-			return logStreamClosedMsg{}
+			return logStreamClosedMsg{runID: runID}
 		}
-		return logLineMsg(line)
+		return logLineMsg{runID: runID, line: line}
 	}
 }
 
-func waitForDone(ch <-chan error) tea.Cmd {
+func waitForDone(ch <-chan error, runID uint64) tea.Cmd {
 	return func() tea.Msg {
 		err := <-ch
-		return cmdDoneMsg{err: err}
+		return cmdDoneMsg{runID: runID, err: err}
 	}
 }
 
@@ -481,10 +489,13 @@ func (m model) copyLogs() (tea.Model, tea.Cmd) {
 }
 
 func (m model) switchLogHost(delta int) (tea.Model, tea.Cmd) {
-	if m.running || m.showConfirm || m.showMenu || m.showSecrets || m.addingSecret || m.showVersionInput || m.showDashboard || m.selectedAction.key != "l" || len(m.logHosts) < 2 {
+	if m.showConfirm || m.showMenu || m.showSecrets || m.addingSecret || m.showVersionInput || m.showDashboard || m.selectedAction.key != "l" || len(m.logHosts) < 2 {
 		return m, nil
 	}
 	m.logHostIndex = (m.logHostIndex + delta + len(m.logHosts)) % len(m.logHosts)
+	if m.running && m.cancel != nil {
+		m.cancel()
+	}
 	dest := ""
 	if it, ok := m.destList.SelectedItem().(destItem); ok {
 		dest = string(it)
@@ -580,6 +591,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showDashboard = false
 				return m, nil
 			}
+			if m.running {
+				m.cancelled = true
+				m.running = false
+				m.statusLine = okStyle.Render("cancelled")
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, nil
+			}
 			if !m.showVersionInput && !m.running && !m.showSecrets && !m.addingSecret && !m.showConfirm && !m.showMenu {
 				if m.cancel != nil {
 					m.cancel()
@@ -620,7 +640,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.running {
-				break // use ctrl+c to abort
+				m.cancelled = true
+				m.running = false
+				m.statusLine = okStyle.Render("cancelled")
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, nil
 			}
 		case "r":
 			// Manual refresh when dashboard is open
@@ -816,24 +842,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case logLineMsg:
-		line := string(msg)
+		if msg.runID != m.runID {
+			return m, nil
+		}
+		line := msg.line
 		if m.logFilter != "" && !strings.Contains(strings.ToLower(line), strings.ToLower(m.logFilter)) {
-			return m, waitForLine(m.lineCh)
+			return m, waitForLine(m.lineCh, m.runID)
 		}
 		m.outputBuf = append(m.outputBuf, highlightLogLine(line))
 		m.viewport.SetContent(strings.Join(m.outputBuf, "\n"))
 		if m.logFollowing {
 			m.viewport.GotoBottom()
 		}
-		return m, waitForLine(m.lineCh)
+		return m, waitForLine(m.lineCh, m.runID)
 
 	case logStreamClosedMsg:
+		if msg.runID != m.runID {
+			return m, nil
+		}
 		return m, nil
 
 	case cmdDoneMsg:
+		if msg.runID != m.runID {
+			return m, nil
+		}
 		m.running = false
 		m.lastErr = msg.err
-		if msg.err != nil {
+		if m.cancelled {
+			m.statusLine = okStyle.Render("cancelled")
+		} else if msg.err != nil {
 			m.statusLine = badStyle.Render("failed: " + msg.err.Error())
 		} else {
 			m.statusLine = okStyle.Render("done")
@@ -861,6 +898,8 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 	m.lineCh = make(chan string)
 	m.doneCh = make(chan error, 1)
 	m.running = true
+	m.runID++
+	m.cancelled = false
 	m.selectedAction = action
 	m.outputBuf = nil
 	m.logFollowing = true
@@ -876,7 +915,7 @@ func (m model) startRun(action actionItem, dest, version string) (tea.Model, tea
 	go runKamal(ctx, dest, nil, args, m.lineCh, m.doneCh)
 
 	m.viewport.SetContent(strings.Join(m.outputBuf, "\n"))
-	return m, tea.Batch(m.spinner.Tick, waitForLine(m.lineCh), waitForDone(m.doneCh))
+	return m, tea.Batch(m.spinner.Tick, waitForLine(m.lineCh, m.runID), waitForDone(m.doneCh, m.runID))
 }
 
 // headerView renders the animated brand on the left and project::branch on the right.
@@ -927,15 +966,18 @@ func (m model) logPanelContent(logContent string) string {
 		badgeStyle.Render(target),
 	)
 	meta := headerMetaStyle.Render("REAL-TIME COMMAND OUTPUT  /  " + strings.ToUpper(m.projectName))
-	filter := helpStyle.Render("/ grep  ·  c copy  ·  ↑↓ scroll  ·  End live tail")
-	if m.logFilter != "" {
-		filter = logFilterStyle.Render("grep: "+m.logFilter) + "  " + filter
-	}
-	if m.selectedAction.key == "l" && !m.logFollowing {
-		filter += "  " + logPausedStyle.Render("PAUSED")
-	}
-	if m.showLogFilter {
-		filter = m.logFilterIn.View() + "  " + helpStyle.Render("enter apply · esc cancel")
+	filter := helpStyle.Render("COMMAND OUTPUT")
+	if m.selectedAction.key == "l" {
+		filter = helpStyle.Render("/ grep  ·  c copy  ·  ↑↓ scroll  ·  End live tail")
+		if m.logFilter != "" {
+			filter = logFilterStyle.Render("grep: "+m.logFilter) + "  " + filter
+		}
+		if !m.logFollowing {
+			filter += "  " + logPausedStyle.Render("PAUSED")
+		}
+		if m.showLogFilter {
+			filter = m.logFilterIn.View() + "  " + helpStyle.Render("enter apply · esc cancel")
+		}
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, heading, meta, filter, logContent)
 }
@@ -1110,7 +1152,7 @@ func (m model) footerView() string {
 	}
 	dock := strings.Join(keys, "   ")
 	if actionHint != "" || m.statusLine != "" {
-		dock = actionHint + m.statusLine + "   │   " + dock
+		dock = actionHint + "   │   " + dock
 	}
 	return statusBarStyle.Width(m.width).Render(dock)
 }
