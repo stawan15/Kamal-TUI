@@ -58,6 +58,8 @@ var (
 	logURLStyle     = lipgloss.NewStyle().Foreground(colorActive).Underline(true)
 	logHTTPStyle    = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 	logStatusStyle  = lipgloss.NewStyle().Foreground(colorGood).Bold(true)
+	logFilterStyle  = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	logPausedStyle  = lipgloss.NewStyle().Foreground(colorWarning).Bold(true)
 
 	// Header bar: project :: branch shown top-right
 	headerBranchStyle = lipgloss.NewStyle().

@@ -70,6 +70,12 @@ the combined app logs. After the command finishes, use `[` and `]` to switch
 between all servers and each individual server; the selected server is shown
 in the log panel title and the command is rerun with Kamal's `--hosts` option.
 
+The log viewer follows live output with `kamal app logs -f`. While viewing logs:
+
+- `/` opens a grep filter; press `Enter` to apply and rerun the tail.
+- `c` copies the displayed log buffer to the system clipboard.
+- `↑`/`↓` scrolls history; `End` returns to the live tail.
+
 ### 🔐 Managing Secrets Securely
 
 1. Press `s` in the TUI to open the **Secure Secrets Manager**.
